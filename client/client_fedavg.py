@@ -3,7 +3,7 @@
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from utils.networks import ConvNet
+from utils.utils_fedavg import get_network
 import logging
 
 # Configure logging
@@ -18,16 +18,19 @@ class Client:
         logger.info("Client %d initialized with model: %s", client_id, args.model)
 
     def initialize_model(self):
-        if self.args.dataset == 'CIFAR10':
-            model = ConvNet(channel=3, num_classes=10, net_width=32, net_depth=2, net_act='relu', net_norm='batchnorm', net_pooling='maxpooling').to(self.args.device)
-        elif self.args.dataset == 'MNIST':
-            model = ConvNet(channel=1, num_classes=10, net_width=16, net_depth=2, net_act='relu', net_norm='batchnorm', net_pooling='maxpooling').to(self.args.device)
-        elif self.args.dataset == 'CelebA':
-            model = ConvNet(channel=3, num_classes=2, net_width=32, net_depth=2, net_act='relu', net_norm='batchnorm', net_pooling='maxpooling').to(self.args.device)
-        else:
-            raise ValueError("Unsupported dataset.")
-        logger.info("Local model initialized.")
-        return model
+            im_size = (32, 32) if self.args.dataset == 'CIFAR10' or self.args.dataset == 'CelebA' else (28, 28)
+            channel = 3 if self.args.dataset in ['CIFAR10', 'CelebA'] else 1
+            num_classes = 10 if self.args.dataset != 'CelebA' else 2
+
+            model = get_network(
+                model=self.args.model,
+                channel=channel,
+                num_classes=num_classes,
+                im_size=im_size
+            ).to(self.args.device)
+            
+            logger.info("Global model initialized.")
+            return model
 
     def set_model(self, global_model):
         self.local_model.load_state_dict(global_model)

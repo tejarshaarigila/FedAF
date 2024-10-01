@@ -23,16 +23,16 @@ class ARGS:
         self.eval_mode = 'SS'
         self.Iteration = 1000
         self.lr_img = 1
-        self.batch_real = 256
-        self.num_partitions = 5
+        self.num_partitions = 3
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.steps = 500
+        self.steps = 10
+        self.local_steps = 1
         self.loc_cdc = 0.8
         self.loc_lgkm = 0.8
         self.temperature = 2.0
         self.gamma = 0.9
         self.honesty_ratio = 1
-        self.model_dir = f'./models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}/'
+        self.model_dir = f'./models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
         if self.dataset == 'MNIST':
             self.channel = 1
             self.num_classes = 10
@@ -87,8 +87,8 @@ def simulate(rounds):
         clients.append(client)
 
     # Main communication rounds
-    for r in range(rounds):
-        print(f"XXXX  Communication Round Started: {r + 1}/{rounds}  XXXX")
+    for r in range(1, rounds+1):
+        print(f"---  Round: {r}/{rounds}  ---")
 
         # Step 1: Clients calculate and save their class-wise logits
         for client in clients:
@@ -108,20 +108,18 @@ def simulate(rounds):
         aggregated_labels = aggregate_logits(clients, args.num_classes, 'R')
         save_aggregated_logits(aggregated_labels, args, r, 'R')
         server_update(
+            model_name=args.model,
             data=args.dataset,
-            num_users=args.num_partitions,
             num_partitions=args.num_partitions,
             round_num=r,
             ipc=args.ipc,
             method=args.method,
-            model_name=args.model,
             hratio=args.honesty_ratio,
-            lambda_glob=args.loc_lgkm,
             temperature=args.temperature,
-            num_epochs=500,
+            num_epochs=args.local_steps,
             device=args.device
         )
-        print(f"XXXXX  Communication Round Ended: {r + 1}/{rounds}  XXXXX")
+        print(f"--- Round Ended: {r}/{rounds}  ---")
 
 def aggregate_logits(clients, num_classes, v_r):
     """
