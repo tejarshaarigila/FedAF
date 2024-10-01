@@ -18,7 +18,14 @@ def ensure_directory_exists(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
-def train_model(model, train_loader, Rc_tensor, T_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
+def dynamic_lambda_glob_client(r, total_rounds):
+    """Dynamically adjusts lambda_glob at the client side based on the current round."""
+    max_lambda = 1.0
+    min_lambda = 0.1
+    lambda_glob = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
+    return lambda_glob
+
+def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs):
     """
     Trains the model using the provided training data loader, including LGKM loss.
 
@@ -26,11 +33,9 @@ def train_model(model, train_loader, Rc_tensor, T_tensor, num_classes, lambda_gl
         model (torch.nn.Module): The global model to train.
         train_loader (DataLoader): DataLoader for training data.
         Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
-        T_tensor (torch.Tensor): Initial tensor for LGKM loss computation.
         num_classes (int): Number of classes.
         device (torch.device): Device to train on.
         num_epochs (int): Number of training epochs.
-        lambda_glob (float): Weight for LGKM regularization term.
     """
     model.train()  # Set the model to training mode
     criterion_ce = nn.CrossEntropyLoss()  # Define the loss function
@@ -40,7 +45,15 @@ def train_model(model, train_loader, Rc_tensor, T_tensor, num_classes, lambda_gl
     Rc_smooth = Rc_tensor + epsilon  # Smooth Rc_tensor to avoid log(0)
 
     for epoch in range(num_epochs):
+
         running_loss = 0.0
+
+        lambda_glob = dynamic_lambda_glob_client(epoch, num_epochs)
+
+        # Compute T
+        T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
+        T_smooth = T_tensor + epsilon  # Smooth T_tensor to avoid log(0)
+        
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -48,10 +61,6 @@ def train_model(model, train_loader, Rc_tensor, T_tensor, num_classes, lambda_gl
 
             outputs = model(inputs)
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
-
-            # Recompute T with the updated model after CE loss calculation
-            T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
-            T_smooth = T_tensor + epsilon  # Smooth T_tensor to avoid log(0)
 
             # Compute LGKM loss
             kl_div1 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')
@@ -124,7 +133,7 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
     return T_tensor
 
-def server_update(model_name, data, num_users, num_partitions, round_num, ipc, method, hratio, lambda_glob, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
+def server_update(model_name, data, num_partitions, round_num, ipc, method, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
     """
     Aggregates synthetic data from all clients, updates the global model, evaluates it,
     and computes aggregated logits to send back to clients.
@@ -137,14 +146,13 @@ def server_update(model_name, data, num_users, num_partitions, round_num, ipc, m
         ipc (int): Instances per class.
         method (str): Method used, e.g., 'fedaf'.
         hratio (float): Honesty ratio for client honesty.
-        lambda_glob (float): Weight for LGKM regularization term.
         temperature (float): Temperature for softmax scaling.
         num_epochs (int): Number of epochs for training.
         device (str): Device to use for training ('cuda' or 'cpu').
     """
     # Define paths and ensure directories exist
     data_path = './data'
-    model_dir = os.path.join('models', data, model_name, str(num_users), str(hratio))
+    model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
     ensure_directory_exists(model_dir)
 
     # Load test dataset with necessary transformations
@@ -230,14 +238,11 @@ def server_update(model_name, data, num_users, num_partitions, round_num, ipc, m
     net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
     net.train()
 
-    # Compute initial T using the synthetic dataset
-    print("Server: Computing initial T (class-wise soft labels from synthetic data).")
-    T_tensor = compute_T(net, final_dataset, num_classes, temperature, device)
     Rc_tensor = torch.stack(Rc).to(device)  # Shape: [num_classes, num_classes]
 
     # Train the global model
     print("Server: Starting global model training.")
-    train_model(net, train_loader, Rc_tensor, T_tensor, num_classes, lambda_glob, temperature, device, num_epochs=num_epochs)
+    train_model(net, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs=num_epochs)
 
     # Evaluate the updated global model
     print("Server: Evaluating the updated global model.")

@@ -8,7 +8,6 @@ from torchvision.utils import save_image
 from torch import optim
 from torch.utils.data import DataLoader, Subset  # Added missing imports
 from utils.utils_fedaf import (
-    get_network,
     load_latest_model,
     calculate_logits_labels,
     compute_swd,
@@ -40,7 +39,6 @@ class Client:
         self.ipc = args.ipc
         self.temperature = args.temperature
         self.gamma = args.gamma
-        self.batch_real = args.batch_real
         self.method = args.method
         self.dataset = args.dataset
         self.model_name = args.model_name
@@ -81,6 +79,13 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error loading global model - {e}")
             raise e
+
+    def dynamic_lambda_cdc(self, r, total_rounds):
+        """Dynamically adjusts lambda_cdc based on the current round."""
+        max_lambda = 1.0
+        min_lambda = 0.1
+        lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
+        return lambda_cdc
 
     def resample_model(self, model_net):
         """
@@ -320,13 +325,16 @@ class Client:
                     raise AttributeError("Model does not have an 'embed' method.")
 
                 loss = torch.tensor(0.0, device=self.device)
+
+                lambda_cdc = self.dynamic_lambda_cdc(it, self.args.Iteration + 1)
+
                 for c in self.initialized_classes:
                     # Retrieve synthetic images for class c
                     img_syn = self.image_syn[c * self.ipc:(c + 1) * self.ipc]
                     if img_syn.size(0) == 0:
                         logger.warning(f"Client {self.client_id}: No synthetic images for class {c}. Skipping.")
                         continue
-
+                    
                     # Compute synthetic logits using the global model
                     logit_syn = self.model(img_syn)
                     local_ukc = torch.mean(logit_syn, dim=0)
@@ -352,7 +360,7 @@ class Client:
 
                             # Client Data Condensation Loss
                             if self.global_Vc[c] is not None and self.global_Vc[c].numel() > 0:
-                                loss_logit = self.args.loc_cdc * compute_swd(local_ukc, self.global_Vc[c])
+                                loss_logit = lambda_cdc * compute_swd(local_ukc, self.global_Vc[c])
                                 loss += loss_logit
                                 logger.debug(f"Client {self.client_id}: Class {c} Client Data Condensation Loss: {loss_logit.item():.4f}")
                             else:
