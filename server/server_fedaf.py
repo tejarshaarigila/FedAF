@@ -75,7 +75,7 @@ def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device
 
             running_loss += loss_ce.item()
 
-        print(f'Server: Epoch {epoch + 1}, Loss = CE Loss: {running_loss / len(train_loader):.4f} + LGKM Loss: {loss_lgkm.item():.4f} = {(running_loss / len(train_loader) + loss_lgkm.item()):.4f}')
+        print(f'Server: Epoch {epoch + 1}, Loss = CE Loss: {running_loss / len(train_loader):.4f} + Lambda: {lambda_glob} * LGKM Loss: {loss_lgkm.item():.4f} = {(running_loss / len(train_loader) + (lambda_glob * loss_lgkm.item())):.4f}')
         running_loss = 0.0
 
 def evaluate_model(model, test_loader, device):
