@@ -8,11 +8,11 @@ import numpy as np
 
 class PlotArgs:
     def __init__(self):
-        self.dataset = 'MNIST'  # 'CIFAR10','MNIST'
+        self.dataset = 'CIFAR10'  # 'CIFAR10','MNIST'
         self.model = 'ConvNet' # 'ConvNet'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.test_repeats = 3  # Number of times to repeat testing for averaging
-        self.num_user = 5 # Number of clients
+        self.test_repeats = 5  # Number of times to repeat testing for averaging
+        self.num_user = 10 # Number of clients
         self.honesty_ratio = 1  # Honesty ratio parameter
         self.methods = ['fedaf','fedavg']  # Methods to compare
         self.model_base_dir = f'./models/{self.dataset}/{self.model}/{self.num_user}/{self.honesty_ratio}/'
