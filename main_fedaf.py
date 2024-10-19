@@ -114,6 +114,7 @@ def simulate(rounds):
             round_num=r,
             ipc=args.ipc,
             method=args.method,
+            lambda_glob=args.loc_lgkm,
             hratio=args.honesty_ratio,
             temperature=args.temperature,
             num_epochs=args.global_steps,
