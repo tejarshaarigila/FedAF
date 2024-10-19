@@ -21,7 +21,7 @@ class ARGS:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
-        self.Iteration = 1000
+        self.Iteration = 500
         self.lr_img = 1
         self.num_partitions = 3
         self.alpha = 0.1  # Dirichlet distribution parameter
