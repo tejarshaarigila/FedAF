@@ -124,7 +124,7 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
     return T_tensor
 
-def server_update(model_name, data, num_partitions, round_num, ipc, method, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
+def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
     """
     Aggregates synthetic data from all clients, updates the global model, evaluates it,
     and computes aggregated logits to send back to clients.
@@ -233,7 +233,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
 
     # Train the global model
     print("Server: Starting global model training.")
-    train_model(net, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs=num_epochs)
+    train_model(net, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs=num_epochs)
 
     # Evaluate the updated global model
     print("Server: Evaluating the updated global model.")
