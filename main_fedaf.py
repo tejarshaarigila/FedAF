@@ -23,7 +23,7 @@ class ARGS:
         self.eval_mode = 'SS'
         self.Iteration = 500
         self.lr_img = 1
-        self.num_partitions = 3
+        self.num_partitions = 10
         self.alpha = 0.1  # Dirichlet distribution parameter
         self.steps = 1000
         self.global_steps = 500
