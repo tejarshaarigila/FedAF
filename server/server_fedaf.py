@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torchvision import datasets, transforms
-from utils.utils_fedaf import load_latest_model, compute_swd
+from utils.utils_fedaf import load_latest_model, compute_swd, get_network
 import torch.optim as optim
 import logging
 
@@ -32,9 +32,9 @@ def ensure_directory_exists(path):
         logger.error(f"ensure_directory_exists: Error creating directory {path} - {e}")
         raise e
 
-def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
+def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs, class_weights=None):
     """
-    Trains the model using the provided training data loader, including LGKM loss.
+    Trains the model using the provided training data loader, including LGKM loss and class weights.
 
     Args:
         model (torch.nn.Module): The global model to train.
@@ -45,10 +45,17 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
         temperature (float): Temperature parameter for softmax.
         device (str): Device to perform computations on.
         num_epochs (int): Number of training epochs.
+        class_weights (torch.Tensor, optional): Tensor of shape [num_classes] containing class weights.
     """
     try:
         model.train()  # Set the model to training mode
-        criterion_ce = nn.CrossEntropyLoss()  # Define the Cross-Entropy loss
+        if class_weights is not None:
+            criterion_ce = nn.CrossEntropyLoss(weight=class_weights.to(device))  # Define the loss function with class weights
+            logger.info("train_model: Using weighted Cross-Entropy Loss.")
+        else:
+            criterion_ce = nn.CrossEntropyLoss()  # Define the loss function without class weights
+            logger.info("train_model: Using standard Cross-Entropy Loss.")
+        
         optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)  # Optimizer with momentum
 
         epsilon = 1e-8
@@ -192,10 +199,34 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
         T_tensor = torch.stack([torch.full((num_classes,), 1.0 / num_classes, device=device) for _ in range(num_classes)])
         return T_tensor
 
+def compute_class_weights(all_labels, num_classes, epsilon=1e-6):
+    """
+    Computes class weights inversely proportional to class frequencies to handle class imbalance.
+
+    Args:
+        all_labels (torch.Tensor): Tensor containing all class labels.
+        num_classes (int): Number of classes.
+        epsilon (float): Small value to avoid division by zero.
+
+    Returns:
+        torch.Tensor: Tensor of shape [num_classes] containing class weights.
+    """
+    try:
+        class_counts = torch.bincount(all_labels, minlength=num_classes).float()
+        class_weights = 1.0 / (class_counts + epsilon)
+        class_weights = class_weights / class_weights.sum() * num_classes  # Normalize weights
+        logger.info(f"compute_class_weights: Computed class weights: {class_weights}")
+        return class_weights
+    except Exception as e:
+        logger.error(f"compute_class_weights: Error computing class weights - {e}")
+        # Fallback to uniform weights in case of error
+        class_weights = torch.ones(num_classes, device=all_labels.device)
+        return class_weights
+
 def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device='cpu'):
     """
-    Aggregates synthetic data from all clients, updates the global model, evaluates it,
-    and computes aggregated logits to send back to clients.
+    Aggregates synthetic data from all clients, updates the global model using weighted classes,
+    evaluates it, and computes aggregated logits to send back to clients.
 
     Args:
         model_name (str): Name of the model architecture.
@@ -301,6 +332,10 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
         all_images = torch.cat(all_images, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
 
+        # Compute class weights to handle class imbalance
+        class_weights = compute_class_weights(all_labels, num_classes)
+        logger.info(f"server_update: Computed class weights for {num_classes} classes.")
+
         # Create training dataset and loader
         final_dataset = TensorDataset(all_images, all_labels)
         train_loader = DataLoader(
@@ -317,17 +352,18 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
 
         Rc_tensor = torch.stack(Rc)  # Rc_tensor is on CPU
 
-        # Train the global model
+        # Train the global model with class weights
         logger.info("server_update: Starting global model training.")
         train_model(
             model=net,
-            train_loader=train_loader,
+            train_loader=train_loade
             Rc_tensor=Rc_tensor,
             num_classes=num_classes,
             lambda_glob=lambda_glob,
             temperature=temperature,
             device=device,
-            num_epochs=num_epochs
+            num_epochs=num_epochs,
+            class_weights=class_weights  # Pass class weights here
         )
 
         # Evaluate the updated global model
