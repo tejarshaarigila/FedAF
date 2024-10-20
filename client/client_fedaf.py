@@ -134,7 +134,7 @@ class Client:
         global_logits_path = os.path.join(self.args.logits_dir, 'Global', global_logits_filename)
         if os.path.exists(global_logits_path):
             try:
-                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)
+                aggregated_tensors = torch.load(global_logits_path, map_location=self.device, weights_only=True)
                 logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
