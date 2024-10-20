@@ -17,6 +17,73 @@ from utils.networks import MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def load_data(dataset, alpha, num_clients, seed=42):
+    """Load and partition data among clients using Dirichlet distribution for non-IID setting."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    logger.info("Loading %s dataset with alpha: %.4f", dataset, alpha)
+
+    # Define data transformations
+    if dataset == 'CIFAR10':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=(0.4914, 0.4822, 0.4465),
+                std=(0.2023, 0.1994, 0.2010)
+            )
+        ])
+        full_train_dataset = datasets.CIFAR10(
+            root='data', train=True, download=True, transform=transform)
+        test_dataset = datasets.CIFAR10(
+            root='data', train=False, download=True, transform=transform)
+    elif dataset == 'MNIST':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+        full_train_dataset = datasets.MNIST(
+            root='data', train=True, download=True, transform=transform)
+        test_dataset = datasets.MNIST(
+            root='data', train=False, download=True, transform=transform)
+    elif dataset == 'CelebA':
+        transform = transforms.Compose([
+            transforms.Resize((64, 64)),
+            transforms.ToTensor()
+        ])
+        full_train_dataset = datasets.CelebA(
+            root='data', split='train', download=True, transform=transform)
+        test_dataset = datasets.CelebA(
+            root='data', split='test', download=True, transform=transform)
+    else:
+        raise ValueError("Unsupported dataset.")
+
+    # Get labels
+    if hasattr(full_train_dataset, 'targets'):
+        labels = np.array(full_train_dataset.targets)
+    elif hasattr(full_train_dataset, 'labels'):
+        labels = np.array(full_train_dataset.labels)
+    else:
+        raise ValueError("Dataset does not have labels or targets attribute.")
+
+    # Partition data indices among clients using Dirichlet distribution
+    client_indices = partition_data_dirichlet(labels, num_clients, alpha, seed)
+    logger.info("Data partitioned among %d clients.", num_clients)
+
+    # Create Subsets for each client
+    client_datasets = [
+        Subset(full_train_dataset, indices)
+        for indices in client_indices
+    ]
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=256,
+        shuffle=False,
+        num_workers=0  # Ensure compatibility with multiprocessing
+    )
+
+    return client_datasets, test_loader
+
 def compute_swd(logits1, logits2, num_projections=100):
     """
     Computes the Sliced Wasserstein Distance (SWD) between two sets of logits.
