@@ -1,5 +1,14 @@
 #!/bin/bash
 
+#SBATCH -p gpu
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH -c 1
+#SBATCH --mem=8GB
+#SBATCH -t 30:00:00 
+#SBATCH -J cifar10
+#SBATCH -o slurm-%j.out
+
 # Specify the paths to your Python files
 PYTHON_FILE_1="main_fedavg.py"
 PYTHON_FILE_2="main_fedaf.py"
