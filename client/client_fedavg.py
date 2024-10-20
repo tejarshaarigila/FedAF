@@ -19,6 +19,7 @@ class Client:
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optimizer = optim.SGD(self.model.parameters(), lr=args.lr)
 
+
     def set_model(self, model_state_dict):
         self.model.load_state_dict(model_state_dict)
 
