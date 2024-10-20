@@ -104,7 +104,7 @@ def main():
         logger.info("\n--- Round %d ---", round_num)
 
         # Get the global model state
-        global_model_state = server.get_global_model_state()
+        global_model_state = {k: v.cpu() for k, v in server.get_global_model_state().items()}
 
         # Prepare client arguments for multiprocessing
         client_args = []
