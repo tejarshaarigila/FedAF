@@ -12,25 +12,30 @@ logger = logging.getLogger(__name__)
 class Client:
     def __init__(self, client_id, train_data, args):
         self.client_id = client_id
-        self.train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
         self.args = args
+        self.train_loader = DataLoader(
+            train_data,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers  # Set num_workers here
+        )
         self.local_model = self.initialize_model()
         logger.info("Client %d initialized with model: %s", client_id, args.model)
 
     def initialize_model(self):
-            im_size = (32, 32) if self.args.dataset == 'CIFAR10' or self.args.dataset == 'CelebA' else (28, 28)
-            channel = 3 if self.args.dataset in ['CIFAR10', 'CelebA'] else 1
-            num_classes = 10 if self.args.dataset != 'CelebA' else 2
+        im_size = (32, 32) if self.args.dataset == 'CIFAR10' or self.args.dataset == 'CelebA' else (28, 28)
+        channel = 3 if self.args.dataset in ['CIFAR10', 'CelebA'] else 1
+        num_classes = 10 if self.args.dataset != 'CelebA' else 2
 
-            model = get_network(
-                model=self.args.model,
-                channel=channel,
-                num_classes=num_classes,
-                im_size=im_size
-            ).to(self.args.device)
-            
-            logger.info("Global model initialized.")
-            return model
+        model = get_network(
+            model=self.args.model,
+            channel=channel,
+            num_classes=num_classes,
+            im_size=im_size
+        ).to(self.args.device)
+        
+        logger.info("Local model initialized.")  # Updated log message
+        return model
 
     def set_model(self, global_model):
         self.local_model.load_state_dict(global_model)

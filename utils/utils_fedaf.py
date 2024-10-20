@@ -13,7 +13,6 @@ import logging
 from utils.networks import MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11BN, ResNet18, ResNet18BN_AP, ResNet18BN
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def compute_swd(logits1, logits2, num_projections=100):
@@ -57,7 +56,7 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
         model_net (torch.nn.Module): The global model.
         partition (torch.utils.data.Dataset): Client's data partition.
         num_classes (int): Number of classes.
-        device (torch.device): Device to perform computations on.
+        device (str): Device to perform computations on.
         path (str): Directory path to save logits.
         ipc (int): Instances per class.
         temperature (float): Temperature parameter for softmax.
@@ -67,7 +66,7 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
     os.makedirs(path, exist_ok=True)
 
     # Create DataLoader for the client's partition
-    dataloader = DataLoader(partition, batch_size=256, shuffle=False)
+    dataloader = DataLoader(partition, batch_size=256, shuffle=False, num_workers=4)  # Set num_workers
 
     # Initialize storage for logits and probabilities
     logits_by_class = [torch.empty((0, num_classes), device=device) for _ in range(num_classes)]
@@ -117,7 +116,7 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
         channel (int): Number of input channels.
         num_classes (int): Number of output classes.
         im_size (tuple): Image size (height, width).
-        device (torch.device): Device to load the model on.
+        device (str): Device to load the model on.
 
     Returns:
         torch.nn.Module: Loaded model.
@@ -128,22 +127,22 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
             latest_model_file = max(model_files, key=os.path.getmtime, default=None)
             
             if latest_model_file:
-                net = get_network(model_name, channel, num_classes, im_size).to(device)
+                net = get_network(model_name, channel, num_classes, im_size, device=device)
                 state_dict = torch.load(latest_model_file, map_location=device)
                 net.load_state_dict(state_dict)
                 logger.info(f"Loaded model from {latest_model_file}")
                 return net
         # If no model exists, initialize a new one
         logger.info("Model directory is empty or no valid model found. Initializing a new model.")
-        net = get_network(model_name, channel, num_classes, im_size).to(device)
+        net = get_network(model_name, channel, num_classes, im_size, device=device)
         return net
     except Exception as e:
         logger.error(f"Error loading the latest model: {e}")
         # Initialize a new model in case of error
-        net = get_network(model_name, channel, num_classes, im_size).to(device)
+        net = get_network(model_name, channel, num_classes, im_size, device=device)
         return net
 
-def get_dataset(dataset, data_path, num_partitions, alpha):
+def get_dataset(dataset, data_path, num_partitions, alpha, seed=None):
     """
     Loads and partitions the dataset using a Dirichlet distribution for non-IID data.
 
@@ -152,10 +151,14 @@ def get_dataset(dataset, data_path, num_partitions, alpha):
         data_path (str): Path to download/load the dataset.
         num_partitions (int): Number of client partitions.
         alpha (float): Dirichlet distribution parameter controlling data heterogeneity.
+        seed (int, optional): Random seed for reproducibility.
 
     Returns:
         tuple: (channel, im_size, num_classes, class_names, mean, std, list of Subset datasets for training, test dataset, test DataLoader)
     """
+    if seed is not None:
+        np.random.seed(seed)
+    
     if dataset == 'MNIST':
         channel = 1
         im_size = (28, 28)
@@ -201,7 +204,47 @@ def get_dataset(dataset, data_path, num_partitions, alpha):
     
     return channel, im_size, num_classes, class_names, mean, std, dst_train_partitions, dst_test, testloader
 
-def get_network(model, channel, num_classes, im_size=(32, 32)):
+def get_default_convnet_setting():
+    """
+    Provides default settings for the ConvNet architecture.
+
+    Returns:
+        tuple: (net_width, net_depth, net_act, net_norm, net_pooling)
+    """
+    net_width = 128
+    net_depth = 3
+    net_act = 'relu'
+    net_norm = 'instancenorm'
+    net_pooling = 'avgpooling'
+    return net_width, net_depth, net_act, net_norm, net_pooling
+
+def get_eval_pool(eval_mode, model, model_eval):
+    """
+    Prepares a pool of models for evaluation based on the evaluation mode.
+
+    Args:
+        eval_mode (str): Evaluation mode ('S', 'SS', etc.).
+        model (str): Current model architecture.
+        model_eval (str): Model architecture for evaluation.
+
+    Returns:
+        list: List containing model architectures for evaluation.
+    """
+    if eval_mode == 'S':  # Self
+        if 'BN' in model:
+            logger.warning('Attention: Replacing BatchNorm with InstanceNorm in evaluation.')
+        try:
+            bn_index = model.index('BN')
+            model_eval_pool = [model[:bn_index]]
+        except ValueError:
+            model_eval_pool = [model]
+    elif eval_mode == 'SS':  # Self-Self
+        model_eval_pool = [model]
+    else:
+        model_eval_pool = [model_eval]
+    return model_eval_pool
+
+def get_network(model, channel, num_classes, im_size=(32, 32), device='cpu'):
     torch.random.manual_seed(int(time.time() * 1000) % 100000)
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
 
@@ -277,15 +320,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32)):
         net = None
         exit('unknown model: %s'%model)
 
-    gpu_num = torch.cuda.device_count()
-    if gpu_num>0:
-        device = 'cuda'
-        if gpu_num>1:
-            net = nn.DataParallel(net)
-    else:
-        device = 'cpu'
     net = net.to(device)
-
     return net
 
 def get_default_convnet_setting():
@@ -327,4 +362,3 @@ def get_eval_pool(eval_mode, model, model_eval):
     else:
         model_eval_pool = [model_eval]
     return model_eval_pool
-

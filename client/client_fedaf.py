@@ -6,33 +6,26 @@ import numpy as np
 import torch
 from torchvision.utils import save_image
 from torch import optim
-from torch.utils.data import DataLoader, Subset  # Added missing imports
+from torch.utils.data import DataLoader, Subset
 from utils.utils_fedaf import (
     load_latest_model,
     calculate_logits_labels,
     compute_swd,
 )
 import logging
+import random
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class Client:
     def __init__(self, client_id, data_partition, args):
         """
         Initializes a federated learning client.
-
-        Args:
-            client_id (int): Unique identifier for the client.
-            data_partition (torch.utils.data.Subset): Subset of the dataset assigned to the client.
-            args (Namespace): Argument parser containing hyperparameters and configurations.
         """
         self.client_id = client_id
         self.data_partition = data_partition
         self.args = args
-        self.device = torch.device(args.device)
+        self.device = 'cpu' 
         self.num_classes = args.num_classes
         self.channel = args.channel
         self.im_size = args.im_size
@@ -43,22 +36,21 @@ class Client:
         self.dataset = args.dataset
         self.model_name = args.model_name
         self.save_image_path = os.path.join(args.save_image_dir, f'Client_{self.client_id}')
-
         self.synthetic_data_path = os.path.join(args.save_path, f'Client_{self.client_id}')
 
         os.makedirs(self.save_image_path, exist_ok=True)
-        os.makedirs(os.path.dirname(self.synthetic_data_path), exist_ok=True)
+        os.makedirs(self.synthetic_data_path, exist_ok=True)
 
         self.synthetic_data = []
         self.global_Vc = []
+        self.initialized_classes = []
 
-        # Initialize the client components
-        self.model = self.load_global_model()
+        # Remove model initialization from __init__
+        # self.model = self.load_global_model()
 
     def load_global_model(self):
         """
         Loads the latest global model from the server and resamples it.
-
         Returns:
             torch.nn.Module: Loaded and resampled global model.
         """
@@ -83,7 +75,7 @@ class Client:
     def dynamic_lambda_cdc(self, r, total_rounds):
         """Dynamically adjusts lambda_cdc based on the current round."""
         max_lambda = 1.0
-        min_lambda = 0.1
+        min_lambda = 0.5
         lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
         return lambda_cdc
 
@@ -105,6 +97,14 @@ class Client:
         """
         Calculates class-wise averaged logits and saves them to disk.
         """
+        # Set random seed for reproducibility
+        torch.manual_seed(self.client_id)
+        np.random.seed(self.client_id)
+        random.seed(self.client_id)
+
+        # Load the global model here
+        self.model = self.load_global_model()
+
         self.logit_path = os.path.join(
             self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
         )
@@ -138,10 +138,10 @@ class Client:
                 logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
-                aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
+                aggregated_tensors = [torch.zeros(self.num_classes) for _ in range(self.num_classes)]
         else:
             logger.warning(f"Client {self.client_id}: Aggregated logits not found at {global_logits_path}. Initializing with zeros.")
-            aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
+            aggregated_tensors = [torch.zeros(self.num_classes) for _ in range(self.num_classes)]
         return aggregated_tensors
 
     def initialize_synthetic_data(self, r):
@@ -157,13 +157,11 @@ class Client:
             self.image_syn = torch.randn(
                 size=(self.num_classes * self.ipc, self.channel, self.im_size[0], self.im_size[1]),
                 dtype=torch.float,
-                requires_grad=True,
-                device=self.device
+                requires_grad=True
             )
             self.label_syn = torch.tensor(
                 [np.ones(self.ipc) * i for i in range(self.num_classes)],
-                dtype=torch.long,
-                device=self.device
+                dtype=torch.long
             ).view(-1)
 
             initialized_classes = []
@@ -175,7 +173,6 @@ class Client:
                     if real_loader is not None:
                         try:
                             images, _ = next(iter(real_loader))
-                            images = images.to(self.device)
                             if images.size(0) >= self.ipc:
                                 selected_images = images[:self.ipc]
                                 initialized_classes.append(c)
@@ -196,7 +193,6 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
             raise e
-
 
     def get_images_loader(self, class_label, max_batch_size=256):
         """
@@ -221,7 +217,7 @@ class Client:
 
             # Determine actual batch size
             actual_batch_size = min(len(class_indices), max_batch_size)
-            
+
             # Select indices up to the actual batch size
             selected_indices = class_indices[:actual_batch_size]
 
@@ -305,7 +301,15 @@ class Client:
         Trains the synthetic data using the global aggregated logits.
         """
         logger.info(f"Client {self.client_id}: Starting synthetic data training.")
+
+        # Set random seed for reproducibility
+        torch.manual_seed(self.client_id + r)
+        np.random.seed(self.client_id + r)
+        random.seed(self.client_id + r)
+
         try:
+            self.model = self.load_global_model()
+
             optimizer_img = optim.SGD([self.image_syn], lr=self.args.lr_img, momentum=0.5)
             logger.info("[X] Data Condensation begins...")
 
@@ -324,7 +328,7 @@ class Client:
                 if embed is None:
                     raise AttributeError("Model does not have an 'embed' method.")
 
-                loss = torch.tensor(0.0, device=self.device)
+                loss = torch.tensor(0.0)
 
                 lambda_cdc = self.dynamic_lambda_cdc(it, self.args.Iteration + 1)
 
@@ -334,7 +338,7 @@ class Client:
                     if img_syn.size(0) == 0:
                         logger.warning(f"Client {self.client_id}: No synthetic images for class {c}. Skipping.")
                         continue
-                    
+
                     # Compute synthetic logits using the global model
                     logit_syn = self.model(img_syn)
                     local_ukc = torch.mean(logit_syn, dim=0)
@@ -347,9 +351,8 @@ class Client:
                     real_loader = self.get_images_loader(c, max_batch_size=256)
                     if real_loader is not None:
                         try:
-                            # Get the first (and only) batch
+                            # Get batch
                             images, _ = next(iter(real_loader))
-                            images = images.to(self.device)
                             output_real = embed(images)
                             mean_feature_real = torch.mean(output_real, dim=0)
 
