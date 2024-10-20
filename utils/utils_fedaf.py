@@ -128,7 +128,7 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
             
             if latest_model_file:
                 net = get_network(model_name, channel, num_classes, im_size, device=device)
-                state_dict = torch.load(latest_model_file, map_location=device)
+                state_dict = torch.load(latest_model_file, map_location=device, weights_only=True)
                 net.load_state_dict(state_dict)
                 logger.info(f"Loaded model from {latest_model_file}")
                 return net
