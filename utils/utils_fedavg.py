@@ -15,15 +15,20 @@ from utils.networks import (
 # Configure logging
 logger = logging.getLogger(__name__)
 
-def load_data(dataset, alpha, num_clients, seed=None):
+def load_data(dataset, alpha, num_clients, seed=42):
     """Load and partition data among clients using Dirichlet distribution for non-IID setting."""
-    if seed is not None:
-        np.random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     logger.info("Loading %s dataset with alpha: %.4f", dataset, alpha)
+
+    # Define data transformations
     if dataset == 'CIFAR10':
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
+            transforms.Normalize(
+                mean=(0.4914, 0.4822, 0.4465),
+                std=(0.2023, 0.1994, 0.2010)
+            )
         ])
         full_train_dataset = datasets.CIFAR10(
             root='data', train=True, download=True, transform=transform)
@@ -32,7 +37,7 @@ def load_data(dataset, alpha, num_clients, seed=None):
     elif dataset == 'MNIST':
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
+            transforms.Normalize((0.1307,), (0.3081,))
         ])
         full_train_dataset = datasets.MNIST(
             root='data', train=True, download=True, transform=transform)
@@ -50,55 +55,74 @@ def load_data(dataset, alpha, num_clients, seed=None):
     else:
         raise ValueError("Unsupported dataset.")
 
-    # Split data into non-IID partitions
-    targets = np.array(full_train_dataset.targets)
-    client_indices = partition_data(targets, num_clients, alpha, seed)
+    # Get labels
+    if hasattr(full_train_dataset, 'targets'):
+        labels = np.array(full_train_dataset.targets)
+    elif hasattr(full_train_dataset, 'labels'):
+        labels = np.array(full_train_dataset.labels)
+    else:
+        raise ValueError("Dataset does not have labels or targets attribute.")
+
+    # Partition data indices among clients using Dirichlet distribution
+    client_indices = partition_data_dirichlet(labels, num_clients, alpha, seed)
     logger.info("Data partitioned among %d clients.", num_clients)
 
-    client_datasets = [Subset(full_train_dataset, indices) for indices in client_indices]
-    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=4)
+    # Create Subsets for each client
+    client_datasets = [
+        Subset(full_train_dataset, indices)
+        for indices in client_indices
+    ]
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=256,
+        shuffle=False,
+        num_workers=0  # Ensure compatibility with multiprocessing
+    )
 
     return client_datasets, test_loader
 
-def partition_data(targets, num_clients, alpha, seed=None):
-    """Partition data using Dirichlet distribution."""
-    if seed is not None:
-        np.random.seed(seed)
-    client_indices = [[] for _ in range(num_clients)]
-    num_classes = np.max(targets) + 1
-    for class_idx in range(num_classes):
-        class_indices = np.where(targets == class_idx)[0]
-        np.random.shuffle(class_indices)
-        proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
-        proportions = proportions / proportions.sum()
-        samples_per_client = (proportions * len(class_indices)).astype(int)
-        # Adjust to match total samples
-        while samples_per_client.sum() < len(class_indices):
-            samples_per_client[np.argmax(proportions)] += 1
-        while samples_per_client.sum() > len(class_indices):
-            samples_per_client[np.argmax(samples_per_client)] -= 1
-        idx = 0
-        for client_id in range(num_clients):
-            num_samples = samples_per_client[client_id]
-            client_indices[client_id].extend(class_indices[idx:idx + num_samples])
-            idx += num_samples
+def partition_data_dirichlet(labels, num_clients, alpha, seed=42):
+    """Partition data indices among clients using Dirichlet distribution.
 
-    logger.info("Data partitioning complete.")
-    return client_indices
-
-def get_default_convnet_setting():
-    """
-    Provides default settings for the ConvNet architecture.
+    Args:
+        labels (array): Array of labels for the dataset.
+        num_clients (int): Number of clients.
+        alpha (float): Dirichlet distribution parameter.
+        seed (int): Random seed for reproducibility.
 
     Returns:
-        tuple: (net_width, net_depth, net_act, net_norm, net_pooling)
+        client_indices (list): List of index arrays for each client.
     """
-    net_width = 128
-    net_depth = 3
-    net_act = 'relu'
-    net_norm = 'instancenorm'
-    net_pooling = 'avgpooling'
-    return net_width, net_depth, net_act, net_norm, net_pooling
+    np.random.seed(seed)
+    num_classes = np.max(labels) + 1
+    label_indices = [np.where(labels == i)[0] for i in range(num_classes)]
+
+    client_indices = [[] for _ in range(num_clients)]
+
+    for c in range(num_classes):
+        np.random.shuffle(label_indices[c])
+        proportions = np.random.dirichlet(
+            alpha * np.ones(num_clients)
+        )
+        # Balance proportions so that each client gets data
+        proportions = np.array([
+            p * (len(idx) < len(labels) / num_clients)
+            for p, idx in zip(proportions, client_indices)
+        ])
+        proportions = proportions / proportions.sum()
+        splits = (proportions * len(label_indices[c])).astype(int)
+        # Adjust splits to ensure all samples are assigned
+        splits[-1] = len(label_indices[c]) - splits[:-1].sum()
+        idx_list = np.split(label_indices[c], np.cumsum(splits)[:-1])
+        for idx, client_idx in zip(idx_list, client_indices):
+            client_idx.extend(idx.tolist())
+
+    # Shuffle indices for each client
+    for idx in client_indices:
+        np.random.shuffle(idx)
+
+    return client_indices
 
 def get_network(model, channel, num_classes, im_size=(32, 32), device='cpu'):
     torch.random.manual_seed(int(time.time() * 1000) % 100000)
@@ -107,7 +131,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), device='cpu'):
     if model == 'MLP':
         net = MLP(channel=channel, num_classes=num_classes)
     elif model == 'ConvNet':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
+        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth,
+                      net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
     elif model == 'LeNet':
         net = LeNet(channel=channel, num_classes=num_classes)
     elif model == 'AlexNet':
@@ -115,7 +140,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32), device='cpu'):
     elif model == 'AlexNetBN':
         net = AlexNetBN(channel=channel, num_classes=num_classes)
     elif model == 'VGG11':
-        net = VGG11( channel=channel, num_classes=num_classes)
+        net = VGG11(channel=channel, num_classes=num_classes)
     elif model == 'VGG11BN':
         net = VGG11BN(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18':
@@ -124,62 +149,12 @@ def get_network(model, channel, num_classes, im_size=(32, 32), device='cpu'):
         net = ResNet18BN_AP(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18BN':
         net = ResNet18BN(channel=channel, num_classes=num_classes)
-
-    elif model == 'ConvNetD1':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=1, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetD2':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=2, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetD3':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=3, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetD4':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=4, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetW32':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=32, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetW64':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=64, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetW128':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=128, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetW256':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=256, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetAS':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='sigmoid', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetAR':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='relu', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetAL':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='leakyrelu', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetASwish':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='swish', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetASwishBN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='swish', net_norm='batchnorm', net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetNN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='none', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetBN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='batchnorm', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetLN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='layernorm', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetIN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='instancenorm', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetGN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='groupnorm', net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetNP':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='none', im_size=im_size)
-    elif model == 'ConvNetMP':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='maxpooling', im_size=im_size)
-    elif model == 'ConvNetAP':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='avgpooling', im_size=im_size)
-
     else:
-        net = None
-        exit('unknown model: %s'%model)
+        raise ValueError('Unknown model: %s' % model)
 
     net = net.to(device)
 
     return net
-
 
 def get_default_convnet_setting():
     """
