@@ -189,7 +189,12 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
     # Aggregate synthetic data from all clients
     print("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
-        synthetic_data_filename = os.path.join('result',f'Client_{client_id}',f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt')
+        synthetic_data_filename = os.path.join(
+            'result',
+            f'Client_{client_id}',
+            f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
+        )
+
         if os.path.exists(synthetic_data_filename):
             try:
                 data_dict = torch.load(synthetic_data_filename, map_location=device)
@@ -207,9 +212,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
 
     if not all_images:
         print("Server: No synthetic data aggregated from clients. Skipping model update.")
-        # Initialize aggregated logits with zeros
-        aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-        return aggregated_logits
+        return
 
     # Concatenate all synthetic data
     all_images = torch.cat(all_images, dim=0)
@@ -242,4 +245,5 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
         print(f"Server: Global model updated and saved to {model_path}.")
     except Exception as e:
         print(f"Server: Error saving the global model - {e}")
-        
+    
+    return
