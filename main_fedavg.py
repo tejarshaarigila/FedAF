@@ -19,9 +19,9 @@ class ARGS:
         self.dataset = 'CIFAR10'  # 'MNIST' - 'CIFAR10' - 'CelebA'
         self.model = 'ConvNet'  # 'ConvNet' - 'ResNet'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.num_clients = 10  # Set to the number of CPUs
+        self.num_clients = 10
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.local_epochs = 1
+        self.local_epochs = 10
         self.lr = 0.01
         self.batch_size = 64
         self.num_rounds = 50

@@ -2,6 +2,7 @@
 
 import os
 import torch
+import multiprocessing
 import numpy as np
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
@@ -49,7 +50,7 @@ def initialize_global_model(args):
     """
     Initializes a random global model and saves it so that clients can access it.
     """
-    model = get_network(args.model, args.channel, args.num_classes, args.im_size)
+    model = get_network(args.model, args.channel, args.num_classes, args.im_size).to(args.device)
     model_dir = args.model_dir
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
@@ -187,6 +188,6 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     print(f"Server: Aggregated logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
-    import multiprocessing
+
     multiprocessing.set_start_method('spawn', force=True)  # Ensure compatibility across platforms
     simulate(rounds=50)
