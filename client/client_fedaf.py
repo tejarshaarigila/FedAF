@@ -21,11 +21,16 @@ class Client:
     def __init__(self, client_id, data_partition, args):
         """
         Initializes a federated learning client.
+
+        Args:
+            client_id (int): Unique identifier for the client.
+            data_partition (torch.utils.data.Subset): Subset of the dataset assigned to the client.
+            args (ARGS): Configuration parameters.
         """
         self.client_id = client_id
         self.data_partition = data_partition
         self.args = args
-        self.device = 'cpu' 
+        self.device = args.device
         self.num_classes = args.num_classes
         self.channel = args.channel
         self.im_size = args.im_size
@@ -45,9 +50,18 @@ class Client:
         self.global_Vc = []
         self.initialized_classes = []
 
+        # Initialize DataLoader with num_workers=0 for multiprocessing compatibility
+        self.train_loader = DataLoader(
+            self.data_partition,
+            batch_size=64,  # Adjust batch size as needed
+            shuffle=True,
+            num_workers=0
+        )
+
     def load_global_model(self):
         """
         Loads the latest global model from the server and resamples it.
+
         Returns:
             torch.nn.Module: Loaded and resampled global model.
         """
@@ -70,7 +84,16 @@ class Client:
             raise e
 
     def dynamic_lambda_cdc(self, r, total_rounds):
-        """Dynamically adjusts lambda_cdc based on the current round."""
+        """
+        Dynamically adjusts lambda_cdc based on the current round.
+
+        Args:
+            r (int): Current round number.
+            total_rounds (int): Total number of communication rounds.
+
+        Returns:
+            float: Adjusted lambda_cdc value.
+        """
         max_lambda = 1.0
         min_lambda = 0.5
         lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
@@ -93,6 +116,9 @@ class Client:
     def calculate_and_save_logits(self, r):
         """
         Calculates class-wise averaged logits and saves them to disk.
+
+        Args:
+            r (int): Current round number.
         """
         # Set random seed for reproducibility
         torch.manual_seed(self.client_id)
@@ -126,12 +152,18 @@ class Client:
     def load_global_aggregated_logits(self, r):
         """
         Loads the global aggregated logits from the server's global directory for the current round.
+
+        Args:
+            r (int): Current round number.
+
+        Returns:
+            list of torch.Tensor: Aggregated logits per class.
         """
         global_logits_filename = f'Round{r}_Global_Vc.pt'
         global_logits_path = os.path.join(self.args.logits_dir, 'Global', global_logits_filename)
         if os.path.exists(global_logits_path):
             try:
-                aggregated_tensors = torch.load(global_logits_path, map_location=self.device, weights_only=True)
+                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)
                 logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
@@ -144,6 +176,9 @@ class Client:
     def initialize_synthetic_data(self, r):
         """
         Initializes the synthetic dataset, optionally using real data for initialization.
+
+        Args:
+            r (int): Current round number.
         """
         logger.info(f"Client {self.client_id}: Initializing synthetic data.")
         try:
@@ -154,19 +189,19 @@ class Client:
             self.image_syn = torch.randn(
                 size=(self.num_classes * self.ipc, self.channel, self.im_size[0], self.im_size[1]),
                 dtype=torch.float,
-                requires_grad=True
+                requires_grad=True,
+                device=self.device
             )
-            self.label_syn = torch.stack(
-                [torch.ones(self.args.num_classes, device=self.device) * c for c in range(self.args.num_classes)],
-                dim=0
-            ).float().requires_grad_(False)
+            # Optimized label_syn creation
+            labels_array = np.repeat(np.arange(self.num_classes), self.ipc)
+            self.label_syn = torch.tensor(labels_array, dtype=torch.long, device=self.device)
 
             initialized_classes = []
 
             if self.args.init == 'real':
                 logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
                 for c in range(self.num_classes):
-                    real_loader = self.get_images_loader(c, max_batch_size=min(self.ipc, 256))
+                    real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
                     if real_loader is not None:
                         try:
                             images, _ = next(iter(real_loader))
@@ -204,9 +239,16 @@ class Client:
             DataLoader or None: DataLoader yielding a batch of images, or None if no images are available.
         """
         try:
-            # Get all indices for the specified class
-            all_labels = np.array(self.data_partition.dataset.targets)[self.data_partition.indices]
-            class_indices = np.where(all_labels == class_label)[0]
+            # Get all indices for the specified class within the data partition
+            if hasattr(self.data_partition.dataset, 'targets'):
+                labels = np.array(self.data_partition.dataset.targets)[self.data_partition.indices]
+            elif hasattr(self.data_partition.dataset, 'labels'):
+                labels = np.array(self.data_partition.dataset.labels)[self.data_partition.indices]
+            else:
+                logger.error(f"Client {self.client_id}: Dataset does not have 'targets' or 'labels' attribute.")
+                return None
+
+            class_indices = np.where(labels == class_label)[0]
 
             if len(class_indices) == 0:
                 logger.warning(f"Client {self.client_id}: No images available for class {class_label}.")
@@ -223,7 +265,12 @@ class Client:
             class_subset = torch.utils.data.Subset(self.data_partition.dataset, class_subset_indices)
 
             # Create a DataLoader for the class subset
-            class_loader = DataLoader(class_subset, batch_size=actual_batch_size, shuffle=False)
+            class_loader = DataLoader(
+                class_subset,
+                batch_size=actual_batch_size,
+                shuffle=False,
+                num_workers=0  # Ensure compatibility with multiprocessing
+            )
 
             return class_loader
         except Exception as e:
@@ -238,13 +285,14 @@ class Client:
             iteration (int): Current iteration number.
             mean (list): Mean values for normalization.
             std (list): Standard deviation values for normalization.
+            r (int): Current round number.
         """
         try:
             save_name = os.path.join(
                 self.save_image_path,
                 f'vis_{self.args.method}_{self.args.dataset}_{self.model_name}_round{r}_client{self.client_id}_{self.ipc}ipc_iter{iteration}.png'
             )
-            image_syn_vis = copy.deepcopy(self.image_syn.detach().cpu())
+            image_syn_vis = self.image_syn.detach().cpu().clone()
 
             for ch in range(self.channel):
                 image_syn_vis[:, ch] = image_syn_vis[:, ch] * std[ch] + mean[ch]
@@ -258,6 +306,9 @@ class Client:
     def save_synthetic_data(self, r):
         """
         Saves the synthetic dataset to disk, excludes non-initialized classes.
+
+        Args:
+            r (int): Current round number.
         """
         logger.info(f"Client {self.client_id}: Saving synthetic data.")
         try:
@@ -296,6 +347,9 @@ class Client:
     def train_synthetic_data(self, r):
         """
         Trains the synthetic data using the global aggregated logits.
+
+        Args:
+            r (int): Current round number.
         """
         logger.info(f"Client {self.client_id}: Starting synthetic data training.")
 
@@ -308,7 +362,7 @@ class Client:
             self.model = self.load_global_model()
 
             optimizer_img = optim.SGD([self.image_syn], lr=self.args.lr_img, momentum=0.5)
-            logger.info("[X] Data Condensation begins...")
+            logger.info(f"Client {self.client_id}: Data Condensation begins...")
 
             for it in range(1, self.args.Iteration + 1):
                 if it in self.args.eval_it_pool:
@@ -325,7 +379,7 @@ class Client:
                 if embed is None:
                     raise AttributeError("Model does not have an 'embed' method.")
 
-                loss = torch.tensor(0.0)
+                loss = torch.tensor(0.0, device=self.device)
 
                 lambda_cdc = self.dynamic_lambda_cdc(it, self.args.Iteration + 1)
 
@@ -382,3 +436,4 @@ class Client:
             logger.info(f"Client {self.client_id}: Synthetic data training completed.")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error during synthetic data training - {e}")
+
