@@ -14,11 +14,21 @@ class Client:
         self.client_id = client_id
         self.args = args
         self.device = args.device
-        self.model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=self.device)
-        self.train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=0)
+        self.model = get_network(
+            args.model,
+            args.channel,
+            args.num_classes,
+            args.im_size,
+            device=self.device
+        )
+        self.train_loader = DataLoader(
+            train_data,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=0  # Ensure num_workers=0
+        )
         self.criterion = torch.nn.CrossEntropyLoss()
         self.optimizer = optim.SGD(self.model.parameters(), lr=args.lr)
-
 
     def set_model(self, model_state_dict):
         self.model.load_state_dict(model_state_dict)
