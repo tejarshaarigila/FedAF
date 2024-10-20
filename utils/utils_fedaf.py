@@ -84,6 +84,48 @@ def load_data(dataset, alpha, num_clients, seed=42):
 
     return client_datasets, test_loader
 
+def partition_data_dirichlet(labels, num_clients, alpha, seed=42):
+    """Partition data indices among clients using Dirichlet distribution.
+
+    Args:
+        labels (array): Array of labels for the dataset.
+        num_clients (int): Number of clients.
+        alpha (float): Dirichlet distribution parameter.
+        seed (int): Random seed for reproducibility.
+
+    Returns:
+        client_indices (list): List of index arrays for each client.
+    """
+    np.random.seed(seed)
+    num_classes = np.max(labels) + 1
+    label_indices = [np.where(labels == i)[0] for i in range(num_classes)]
+
+    client_indices = [[] for _ in range(num_clients)]
+
+    for c in range(num_classes):
+        np.random.shuffle(label_indices[c])
+        proportions = np.random.dirichlet(
+            alpha * np.ones(num_clients)
+        )
+        # Balance proportions so that each client gets data
+        proportions = np.array([
+            p * (len(idx) < len(labels) / num_clients)
+            for p, idx in zip(proportions, client_indices)
+        ])
+        proportions = proportions / proportions.sum()
+        splits = (proportions * len(label_indices[c])).astype(int)
+        # Adjust splits to ensure all samples are assigned
+        splits[-1] = len(label_indices[c]) - splits[:-1].sum()
+        idx_list = np.split(label_indices[c], np.cumsum(splits)[:-1])
+        for idx, client_idx in zip(idx_list, client_indices):
+            client_idx.extend(idx.tolist())
+
+    # Shuffle indices for each client
+    for idx in client_indices:
+        np.random.shuffle(idx)
+
+    return client_indices
+
 def compute_swd(logits1, logits2, num_projections=100):
     """
     Computes the Sliced Wasserstein Distance (SWD) between two sets of logits.
