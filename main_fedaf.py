@@ -46,7 +46,7 @@ def initialize_global_model(args):
     """
     Initializes a random global model and saves it so that clients can access it.
     """
-    model = get_network(args.model, args.channel, args.num_classes, args.im_size)
+    model = get_network(args.model, args.channel, args.num_classes, args.im_size).to(args.device)
     model_dir = args.model_dir
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
@@ -163,4 +163,4 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
 
 if __name__ == '__main__':
 
-    simulate(rounds=20)
+    simulate(rounds=50)
