@@ -27,8 +27,6 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
         train_loader (DataLoader): DataLoader for training data.
         Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
         num_classes (int): Number of classes.
-        lambda_glob (float): Weight for the LGKM loss.
-        temperature (float): Temperature for softmax scaling.
         device (torch.device): Device to train on.
         num_epochs (int): Number of training epochs.
     """
@@ -56,8 +54,8 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
 
             # Compute LGKM loss
-            kl_div1 = nn.functional.kl_div(T_smooth.log(), Rc_smooth, reduction='batchmean')  # KL(T || R)
-            kl_div2 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')  # KL(R || T)
+            kl_div1 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')
+            kl_div2 = nn.functional.kl_div(T_smooth.log(), Rc_smooth, reduction='batchmean')
             loss_lgkm = (kl_div1 + kl_div2) / 2
 
             # Combine the losses
@@ -68,11 +66,7 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
 
             running_loss += loss_ce.item()
 
-        average_ce_loss = running_loss / len(train_loader)
-        average_lgkm_loss = loss_lgkm.item()
-        total_loss = average_ce_loss + (lambda_glob * average_lgkm_loss)
-
-        print(f'Server: Epoch {epoch + 1}, Loss = CE Loss: {average_ce_loss:.4f} + Lambda: {lambda_glob} * LGKM Loss: {average_lgkm_loss:.4f} = {total_loss:.4f}')
+        print(f'Server: Epoch {epoch + 1}, Loss = CE Loss: {running_loss / len(train_loader):.4f} + Lambda: {lambda_glob} * LGKM Loss: {loss_lgkm.item():.4f} = {(running_loss / len(train_loader) + (lambda_glob * loss_lgkm.item())):.4f}')
         running_loss = 0.0
 
 def evaluate_model(model, test_loader, device):
@@ -101,16 +95,6 @@ def evaluate_model(model, test_loader, device):
 def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     """
     Computes the class-wise averaged soft labels T from the model's predictions on the synthetic data.
-
-    Args:
-        model (torch.nn.Module): The global model.
-        synthetic_dataset (Dataset): Synthetic dataset to compute T from.
-        num_classes (int): Number of classes.
-        temperature (float): Temperature for softmax scaling.
-        device (torch.device): Device to perform computations on.
-
-    Returns:
-        torch.Tensor: Tensor of shape [num_classes, num_classes] representing T.
     """
     model.eval()
     class_logits_sum = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
@@ -140,7 +124,7 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
     return T_tensor
 
-def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device=None):
+def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
     """
     Aggregates synthetic data from all clients, updates the global model, evaluates it,
     and computes aggregated logits to send back to clients.
@@ -155,16 +139,8 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
         hratio (float): Honesty ratio for client honesty.
         temperature (float): Temperature for softmax scaling.
         num_epochs (int): Number of epochs for training.
-        device (torch.device, optional): Device to use for training. If None, defaults to CUDA if available.
-
-    Returns:
-        List[torch.Tensor]: Aggregated logits for each class.
+        device (str): Device to use for training ('cuda' or 'cpu').
     """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(device)
-
     # Define paths and ensure directories exist
     data_path = './data'
     model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
@@ -271,11 +247,3 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
         print(f"Server: Global model updated and saved to {model_path}.")
     except Exception as e:
         print(f"Server: Error saving the global model - {e}")
-
-    # Optionally, compute and return aggregated logits if needed
-    # aggregated_logits = compute_T(net, final_dataset, num_classes, temperature, device)
-    # return aggregated_logits
-
-    # If aggregated_logits are needed in a specific format, modify as required
-    aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-    return aggregated_logits
