@@ -156,10 +156,10 @@ class Client:
                 dtype=torch.float,
                 requires_grad=True
             )
-            self.label_syn = torch.tensor(
-                [np.ones(self.ipc) * i for i in range(self.num_classes)],
-                dtype=torch.long
-            ).view(-1)
+            self.label_syn = torch.stack(
+                [torch.ones(self.args.num_classes, device=self.device) * c for c in range(self.args.num_classes)],
+                dim=0
+            ).float().requires_grad_(False)
 
             initialized_classes = []
 
