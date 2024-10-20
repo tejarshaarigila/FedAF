@@ -5,109 +5,75 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torchvision import datasets, transforms
-from utils.utils_fedaf import load_latest_model, compute_swd, get_network
+from utils.utils_fedaf import load_latest_model
 import torch.optim as optim
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='server_fedaf.log',
-    filemode='a'  # Append mode to retain logs across runs
-)
-logger = logging.getLogger(__name__)
 
 def ensure_directory_exists(path):
     """
     Ensures that the directory exists; if not, creates it.
 
     Args:
-        path (str): Directory path to check/create.
+        path (str): Directory path to check and create.
     """
-    try:
-        os.makedirs(path, exist_ok=True)
-        logger.debug(f"ensure_directory_exists: Verified existence of directory {path}.")
-    except Exception as e:
-        logger.error(f"ensure_directory_exists: Error creating directory {path} - {e}")
-        raise e
+    if not os.path.exists(path):
+        os.makedirs(path)
 
-def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs, class_weights=None):
+def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
     """
-    Trains the model using the provided training data loader, including LGKM loss and class weights.
+    Trains the model using the provided training data loader, including LGKM loss.
 
     Args:
         model (torch.nn.Module): The global model to train.
-        train_loader (DataLoader): DataLoader for synthetic training data.
-        Rc_tensor (torch.Tensor): Aggregated class-wise soft labels R(c).
+        train_loader (DataLoader): DataLoader for training data.
+        Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
         num_classes (int): Number of classes.
-        lambda_glob (float): Weight for the LGKM loss component.
-        temperature (float): Temperature parameter for softmax.
-        device (str): Device to perform computations on.
+        lambda_glob (float): Weight for the LGKM loss.
+        temperature (float): Temperature for softmax scaling.
+        device (torch.device): Device to train on.
         num_epochs (int): Number of training epochs.
-        class_weights (torch.Tensor, optional): Tensor of shape [num_classes] containing class weights.
     """
-    try:
-        model.train()  # Set the model to training mode
-        if class_weights is not None:
-            criterion_ce = nn.CrossEntropyLoss(weight=class_weights.to(device))  # Define the loss function with class weights
-            logger.info("train_model: Using weighted Cross-Entropy Loss.")
-        else:
-            criterion_ce = nn.CrossEntropyLoss()  # Define the loss function without class weights
-            logger.info("train_model: Using standard Cross-Entropy Loss.")
+    model.train()  # Set the model to training mode
+    criterion_ce = nn.CrossEntropyLoss()  # Define the loss function
+    optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
+
+    epsilon = 1e-8
+    Rc_smooth = Rc_tensor + epsilon  # Smooth Rc_tensor to avoid log(0)
+
+    for epoch in range(num_epochs):
+
+        running_loss = 0.0
+
+        # Compute T
+        T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
+        T_smooth = T_tensor + epsilon  # Smooth T_tensor to avoid log(0)
         
-        optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)  # Optimizer with momentum
+        for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
 
-        epsilon = 1e-8
-        Rc_smooth = Rc_tensor + epsilon  # Smooth Rc_tensor to avoid log(0)
+            optimizer.zero_grad()  # Zero the gradients at the start of each iteration
 
-        logger.info("train_model: Starting model training.")
-        
-        for epoch in range(num_epochs):
-            running_loss = 0.0
-            running_loss_ce = 0.0
-            running_loss_lgkm = 0.0
+            outputs = model(inputs)
+            loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
 
-            # Compute T for the current epoch
-            T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
-            T_smooth = T_tensor + epsilon  # Smooth T_tensor to avoid log(0)
+            # Compute LGKM loss
+            kl_div1 = nn.functional.kl_div(T_smooth.log(), Rc_smooth, reduction='batchmean')  # KL(T || R)
+            kl_div2 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')  # KL(R || T)
+            loss_lgkm = (kl_div1 + kl_div2) / 2
 
-            for inputs, labels in train_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
+            # Combine the losses
+            combined_loss = loss_ce + lambda_glob * loss_lgkm
 
-                optimizer.zero_grad()  # Zero the gradients at the start of each iteration
+            combined_loss.backward()  # Compute gradients
+            optimizer.step()  # Update model parameters
 
-                outputs = model(inputs)
-                loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
+            running_loss += loss_ce.item()
 
-                # Compute LGKM loss
-                kl_div1 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')
-                kl_div2 = nn.functional.kl_div(T_smooth.log(), Rc_smooth, reduction='batchmean')
-                loss_lgkm = (kl_div1 + kl_div2) / 2
+        average_ce_loss = running_loss / len(train_loader)
+        average_lgkm_loss = loss_lgkm.item()
+        total_loss = average_ce_loss + (lambda_glob * average_lgkm_loss)
 
-                # Combine the losses
-                combined_loss = loss_ce + lambda_glob * loss_lgkm
-
-                combined_loss.backward()  # Compute gradients
-                optimizer.step()  # Update model parameters
-
-                running_loss += combined_loss.item()
-                running_loss_ce += loss_ce.item()
-                running_loss_lgkm += loss_lgkm.item()
-
-            avg_loss = running_loss / len(train_loader)
-            avg_loss_ce = running_loss_ce / len(train_loader)
-            avg_loss_lgkm = running_loss_lgkm / len(train_loader)
-
-            logger.info(
-                f"train_model: Epoch [{epoch + 1}/{num_epochs}], "
-                f"Loss = CE Loss: {avg_loss_ce:.4f} + Lambda: {lambda_glob} * LGKM Loss: {avg_loss_lgkm:.4f} = {avg_loss:.4f}"
-            )
-        
-        logger.info("train_model: Model training completed successfully.")
-    except Exception as e:
-        logger.error(f"train_model: Error during model training - {e}")
-        raise e
+        print(f'Server: Epoch {epoch + 1}, Loss = CE Loss: {average_ce_loss:.4f} + Lambda: {lambda_glob} * LGKM Loss: {average_lgkm_loss:.4f} = {total_loss:.4f}')
+        running_loss = 0.0
 
 def evaluate_model(model, test_loader, device):
     """
@@ -115,26 +81,22 @@ def evaluate_model(model, test_loader, device):
 
     Args:
         model (torch.nn.Module): The global model to evaluate.
-        test_loader (DataLoader): DataLoader for the test dataset.
-        device (str): Device to perform computations on.
+        test_loader (DataLoader): DataLoader for test data.
+        device (torch.device): Device to evaluate on.
     """
-    try:
-        model.eval()  # Set the model to evaluation mode
-        total = 0
-        correct = 0
-        with torch.no_grad():  # No gradients needed
-            for inputs, labels in test_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+    model.eval()  # Set the model to evaluation mode
+    total = 0
+    correct = 0
+    with torch.no_grad():  # No gradients needed
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
 
-        accuracy = 100 * correct / total if total > 0 else 0.0
-        logger.info(f'evaluate_model: Accuracy of the network on test images: {accuracy:.2f}%')
-    except Exception as e:
-        logger.error(f"evaluate_model: Error during model evaluation - {e}")
-        raise e
+    accuracy = 100 * correct / total
+    print(f'Accuracy of the network on test images: {accuracy:.2f}%')
 
 def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     """
@@ -142,240 +104,178 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
 
     Args:
         model (torch.nn.Module): The global model.
-        synthetic_dataset (torch.utils.data.Dataset): Synthetic training dataset.
+        synthetic_dataset (Dataset): Synthetic dataset to compute T from.
         num_classes (int): Number of classes.
-        temperature (float): Temperature parameter for softmax.
-        device (str): Device to perform computations on.
+        temperature (float): Temperature for softmax scaling.
+        device (torch.device): Device to perform computations on.
 
     Returns:
-        torch.Tensor: Tensor of shape [num_classes, num_classes] containing averaged soft labels T(c).
+        torch.Tensor: Tensor of shape [num_classes, num_classes] representing T.
     """
-    try:
-        model.eval()
-        class_logits_sum = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-        class_counts = [0 for _ in range(num_classes)]
+    model.eval()
+    class_logits_sum = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+    class_counts = [0 for _ in range(num_classes)]
 
-        synthetic_loader = DataLoader(
-            synthetic_dataset,
-            batch_size=256,
-            shuffle=False,
-            num_workers=0  # Set to 0 for multiprocessing compatibility
-        )
+    synthetic_loader = DataLoader(synthetic_dataset, batch_size=256, shuffle=False)
 
-        with torch.no_grad():
-            for inputs, labels in synthetic_loader:
-                inputs = inputs.to(device)
-                labels = labels.to(device)
-                outputs = model(inputs)  # [batch_size, num_classes]
-                probs = F.softmax(outputs / temperature, dim=1)  # [batch_size, num_classes]
+    with torch.no_grad():
+        for inputs, labels in synthetic_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)  # [batch_size, num_classes]
+            for i in range(inputs.size(0)):
+                label = labels[i].item()
+                class_logits_sum[label] += outputs[i]
+                class_counts[label] += 1
 
-                for i in range(labels.size(0)):
-                    label = labels[i].item()
-                    if 0 <= label < num_classes:
-                        class_logits_sum[label] += probs[i]
-                        class_counts[label] += 1
-                    else:
-                        logger.warning(f"compute_T: Label {label} out of range [0, {num_classes-1}]. Skipping.")
+    T_list = []
+    for c in range(num_classes):
+        if class_counts[c] > 0:
+            avg_logit = class_logits_sum[c] / class_counts[c]
+            t_c = nn.functional.softmax(avg_logit / temperature, dim=0)
+            T_list.append(t_c)
+        else:
+            # Initialize with uniform distribution if no data for class c
+            T_list.append(torch.full((num_classes,), 1.0 / num_classes, device=device))
 
-        # Average the logits per class
-        T_list = []
-        for c in range(num_classes):
-            if class_counts[c] > 0:
-                avg_prob = class_logits_sum[c] / class_counts[c]
-                T_list.append(avg_prob)
-                logger.debug(f"compute_T: Class {c} - Avg Prob: {avg_prob}")
-            else:
-                # Initialize with uniform distribution if no data for class c
-                uniform_prob = torch.full((num_classes,), 1.0 / num_classes, device=device)
-                T_list.append(uniform_prob)
-                logger.warning(f"compute_T: No synthetic data for class {c}. Initialized T(c) with uniform distribution.")
+    T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
+    return T_tensor
 
-        T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
-        logger.debug("compute_T: Computed class-wise averaged soft labels T(c).")
-        return T_tensor
-    except Exception as e:
-        logger.error(f"compute_T: Error computing T tensor - {e}")
-        # Initialize T_tensor with uniform distributions in case of error
-        T_tensor = torch.stack([torch.full((num_classes,), 1.0 / num_classes, device=device) for _ in range(num_classes)])
-        return T_tensor
-
-def compute_class_weights(all_labels, num_classes, epsilon=1e-6):
+def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device=None):
     """
-    Computes class weights inversely proportional to class frequencies to handle class imbalance.
+    Aggregates synthetic data from all clients, updates the global model, evaluates it,
+    and computes aggregated logits to send back to clients.
 
     Args:
-        all_labels (torch.Tensor): Tensor containing all class labels.
-        num_classes (int): Number of classes.
-        epsilon (float): Small value to avoid division by zero.
-
-    Returns:
-        torch.Tensor: Tensor of shape [num_classes] containing class weights.
-    """
-    try:
-        class_counts = torch.bincount(all_labels, minlength=num_classes).float()
-        class_weights = 1.0 / (class_counts + epsilon)
-        class_weights = class_weights / class_weights.sum() * num_classes  # Normalize weights
-        logger.info(f"compute_class_weights: Computed class weights: {class_weights}")
-        return class_weights
-    except Exception as e:
-        logger.error(f"compute_class_weights: Error computing class weights - {e}")
-        # Fallback to uniform weights in case of error
-        class_weights = torch.ones(num_classes, device=all_labels.device)
-        return class_weights
-
-def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device='cpu'):
-    """
-    Aggregates synthetic data from all clients, updates the global model using weighted classes,
-    evaluates it, and computes aggregated logits to send back to clients.
-
-    Args:
-        model_name (str): Name of the model architecture.
+        model_name (str): Model architecture (e.g., 'ConvNet').
         data (str): Dataset name ('CIFAR10' or 'MNIST').
         num_partitions (int): Number of client partitions.
         round_num (int): Current communication round number.
         ipc (int): Instances per class.
-        method (str): Method identifier (e.g., 'DM').
-        lambda_glob (float): Weight for the LGKM loss component.
-        hratio (float): Honesty ratio parameter.
-        temperature (float): Temperature parameter for softmax.
-        num_epochs (int): Number of epochs to train the global model.
-        device (str): Device to perform computations on ('cpu' or 'cuda').
+        method (str): Method used, e.g., 'fedaf'.
+        hratio (float): Honesty ratio for client honesty.
+        temperature (float): Temperature for softmax scaling.
+        num_epochs (int): Number of epochs for training.
+        device (torch.device, optional): Device to use for training. If None, defaults to CUDA if available.
+
+    Returns:
+        List[torch.Tensor]: Aggregated logits for each class.
     """
-    try:
-        # Set the number of threads for PyTorch (optional, based on your system)
-        torch.set_num_threads(4)  # Adjust as needed
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
 
-        # Define paths and ensure directories exist
-        data_path = './data'
-        model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
-        ensure_directory_exists(model_dir)
+    # Define paths and ensure directories exist
+    data_path = './data'
+    model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
+    ensure_directory_exists(model_dir)
 
-        # Load test dataset with necessary transformations
-        if data == 'CIFAR10':
-            channel = 3
-            im_size = (32, 32)
-            num_classes = 10
-            mean = [0.4914, 0.4822, 0.4465]
-            std = [0.2023, 0.1994, 0.2010]
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize(mean=mean, std=std)
-            ])
-            dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
-        elif data == 'MNIST':
-            channel = 1
-            im_size = (28, 28)
-            num_classes = 10
-            mean = [0.1307]
-            std = [0.3081]
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize(mean=mean, std=std)
-            ])
-            dst_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
-        else:
-            logger.error(f"server_update: Unsupported dataset: {data}")
-            raise ValueError(f"Unsupported dataset: {data}")
+    # Load test dataset with necessary transformations
+    if data == 'CIFAR10':
+        channel = 3
+        im_size = (32, 32)
+        num_classes = 10
+        mean = [0.4914, 0.4822, 0.4465]
+        std = [0.2023, 0.1994, 0.2010]
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std)
+        ])
+        dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
+    elif data == 'MNIST':
+        channel = 1
+        im_size = (28, 28)
+        num_classes = 10
+        mean = [0.1307]
+        std = [0.3081]
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std)
+        ])
+        dst_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
+    else:
+        raise ValueError(f"Unsupported dataset: {data}")
 
-        test_loader = DataLoader(
-            dst_test,
-            batch_size=256,
-            shuffle=False,
-            num_workers=0  # Set to 0 for multiprocessing compatibility
+    test_loader = DataLoader(dst_test, batch_size=256, shuffle=False)
+
+    # Load aggregated class-wise soft labels Rc
+    global_probs_path = os.path.join('logits', 'Global', f'Round{round_num}_Global_Rc.pt')
+    if os.path.exists(global_probs_path):
+        Rc = torch.load(global_probs_path, map_location=device)
+        print("Server: Loaded aggregated class-wise soft labels R(c).")
+    else:
+        print("Server: No aggregated class-wise soft labels found. Initializing R(c) with zeros.")
+        Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+
+    all_images = []
+    all_labels = []
+
+    # Aggregate synthetic data from all clients
+    print("Server: Aggregating synthetic data from clients.")
+    for client_id in range(num_partitions):
+        synthetic_data_filename = os.path.join(
+            'result',
+            f'Client_{client_id}',
+            f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
 
-        # Load aggregated class-wise soft labels Rc
-        global_probs_path = os.path.join('logits', 'Global', f'Round{round_num}_Global_Rc.pt')
-        if os.path.exists(global_probs_path):
+        if os.path.exists(synthetic_data_filename):
             try:
-                Rc = torch.load(global_probs_path, map_location='cpu')  # Load to CPU
-                logger.info("server_update: Loaded aggregated class-wise soft labels R(c).")
+                data_dict = torch.load(synthetic_data_filename, map_location=device)
+                if 'images' in data_dict and 'labels' in data_dict and data_dict['images'].size(0) > 0:
+                    print(f"Server: Loaded synthetic data from Client {client_id}.")
+                    images, labels = data_dict['images'], data_dict['labels']
+                    all_images.append(images)
+                    all_labels.append(labels)
+                else:
+                    print(f"Server: No valid synthetic data from Client {client_id}. Skipping.")
             except Exception as e:
-                logger.error(f"server_update: Error loading aggregated soft labels R(c) - {e}")
-                Rc = [torch.zeros(num_classes) for _ in range(num_classes)]
+                print(f"Server: Error loading data from Client {client_id} - {e}")
         else:
-            logger.warning("server_update: No aggregated class-wise soft labels found. Initializing R(c) with zeros.")
-            Rc = [torch.zeros(num_classes) for _ in range(num_classes)]
+            print(f"Server: No synthetic data found for Client {client_id} at {synthetic_data_filename}. Skipping.")
 
-        all_images = []
-        all_labels = []
+    if not all_images:
+        print("Server: No synthetic data aggregated from clients. Skipping model update.")
+        # Initialize aggregated logits with zeros
+        aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+        return aggregated_logits
 
-        # Aggregate synthetic data from all clients
-        logger.info("server_update: Aggregating synthetic data from clients.")
-        for client_id in range(num_partitions):
-            synthetic_data_filename = os.path.join(
-                'result',
-                f'Client_{client_id}',
-                f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
-            )
+    # Concatenate all synthetic data
+    all_images = torch.cat(all_images, dim=0)
+    all_labels = torch.cat(all_labels, dim=0)
 
-            if os.path.exists(synthetic_data_filename):
-                try:
-                    data_dict = torch.load(synthetic_data_filename, map_location='cpu')
-                    if 'images' in data_dict and 'labels' in data_dict and data_dict['images'].size(0) > 0:
-                        logger.info(f"server_update: Loaded synthetic data from Client {client_id}.")
-                        images, labels = data_dict['images'], data_dict['labels']
-                        all_images.append(images)
-                        all_labels.append(labels)
-                    else:
-                        logger.warning(f"server_update: No valid synthetic data from Client {client_id}. Skipping.")
-                except Exception as e:
-                    logger.error(f"server_update: Error loading data from Client {client_id} - {e}")
-            else:
-                logger.warning(f"server_update: No synthetic data found for Client {client_id} at {synthetic_data_filename}. Skipping.")
+    # Create training dataset and loader
+    final_dataset = TensorDataset(all_images, all_labels)
+    train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
 
-        if not all_images:
-            logger.warning("server_update: No synthetic data aggregated from clients. Skipping model update.")
-            return
+    # Load the latest global model
+    print("Server: Loading the latest global model.")
+    net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
+    net.train()
 
-        # Concatenate all synthetic data
-        all_images = torch.cat(all_images, dim=0)
-        all_labels = torch.cat(all_labels, dim=0)
+    Rc_tensor = torch.stack(Rc).to(device)  # Shape: [num_classes, num_classes]
 
-        # Compute class weights to handle class imbalance
-        class_weights = compute_class_weights(all_labels, num_classes)
-        logger.info(f"server_update: Computed class weights for {num_classes} classes.")
+    # Train the global model
+    print("Server: Starting global model training.")
+    train_model(net, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs=num_epochs)
 
-        # Create training dataset and loader
-        final_dataset = TensorDataset(all_images, all_labels)
-        train_loader = DataLoader(
-            final_dataset,
-            batch_size=256,
-            shuffle=True,
-            num_workers=0  # Set to 0 for multiprocessing compatibility
-        )
+    # Evaluate the updated global model
+    print("Server: Evaluating the updated global model.")
+    evaluate_model(net, test_loader, device)
 
-        # Load the latest global model
-        logger.info("server_update: Loading the latest global model.")
-        net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
-        net.train()
+    # Save the updated global model
+    model_path = os.path.join(model_dir, f"fedaf_global_model_{round_num}.pth")
+    try:
+        ensure_directory_exists(os.path.dirname(model_path))
+        torch.save(net.state_dict(), model_path)
+        print(f"Server: Global model updated and saved to {model_path}.")
+    except Exception as e:
+        print(f"Server: Error saving the global model - {e}")
 
-        Rc_tensor = torch.stack(Rc)  # Rc_tensor is on CPU
+    # Optionally, compute and return aggregated logits if needed
+    # aggregated_logits = compute_T(net, final_dataset, num_classes, temperature, device)
+    # return aggregated_logits
 
-        # Train the global model with class weights
-        logger.info("server_update: Starting global model training.")
-        train_model(
-            model=net,
-            train_loader=train_loader,
-            Rc_tensor=Rc_tensor,
-            num_classes=num_classes,
-            lambda_glob=lambda_glob,
-            temperature=temperature,
-            device=device,
-            num_epochs=num_epochs,
-            class_weights=class_weights  # Pass class weights here
-        )
-
-        # Evaluate the updated global model
-        logger.info("server_update: Evaluating the updated global model.")
-        evaluate_model(net, test_loader, device)
-
-        # Save the updated global model
-        model_path = os.path.join(model_dir, f"fedaf_global_model_{round_num}.pth")
-        try:
-            ensure_directory_exists(os.path.dirname(model_path))
-            torch.save(net.state_dict(), model_path)
-            logger.info(f"server_update: Global model updated and saved to {model_path}.")
-        except Exception as e:
-            logger.error(f"server_update: Error saving the global model - {e}")
-            
+    # If aggregated_logits are needed in a specific format, modify as required
+    aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+    return aggregated_logits
