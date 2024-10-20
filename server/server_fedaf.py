@@ -356,7 +356,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
         logger.info("server_update: Starting global model training.")
         train_model(
             model=net,
-            train_loader=train_loade
+            train_loader=train_loader,
             Rc_tensor=Rc_tensor,
             num_classes=num_classes,
             lambda_glob=lambda_glob,
