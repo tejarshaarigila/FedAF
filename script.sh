@@ -3,7 +3,7 @@
 #SBATCH -p intel
 #SBATCH -N 1          # Number of nodes
 #SBATCH -n 2          # Number of tasks (we will run 2 tasks in parallel)
-#SBATCH -c 10          # CPUs per task
+#SBATCH -c 20          # CPUs per task
 #SBATCH --mem=32G
 #SBATCH -t 30:00:00
 #SBATCH -J cifar10
