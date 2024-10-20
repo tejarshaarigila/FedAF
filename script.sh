@@ -3,15 +3,15 @@
 #SBATCH -p intel
 #SBATCH -N 1          # Number of nodes
 #SBATCH -n 2          # Number of tasks (we will run 2 tasks in parallel)
-#SBATCH -c 20          # CPUs per task
+#SBATCH -c 10          # CPUs per task
 #SBATCH --mem=32G
 #SBATCH -t 30:00:00
 #SBATCH -J cifar10
 #SBATCH -o slurm-%j.out
 
 # Set environment variables
-export OMP_NUM_THREADS=10
-export MKL_NUM_THREADS=10
+export OMP_NUM_THREADS=5
+export MKL_NUM_THREADS=5
 
 # Specify the paths to your Python files
 PYTHON_FILE_1="main_fedavg.py"
@@ -34,12 +34,12 @@ fi
 
 # Run the first Python file using srun in the background
 echo "Running first Python file: $PYTHON_FILE_1"
-srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_1 &
+srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_1 &
 pid1=$!
 
 # Run the second Python file using srun in the background
 echo "Running second Python file: $PYTHON_FILE_2"
-srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_2 &
+srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_2 &
 pid2=$!
 
 # Wait for both srun commands to complete
