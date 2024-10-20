@@ -1,4 +1,7 @@
+# main_fedavg.py
+
 import torch
+import torch.multiprocessing as multiprocessing
 from server.server_fedavg import Server
 from client.client_fedavg import Client
 from utils.utils_fedavg import load_data
@@ -6,8 +9,6 @@ from utils.plot_utils import plot_accuracies
 import logging
 import random
 import copy
-import multiprocessing
-import os
 
 # Configure logging
 logging.basicConfig(
@@ -21,16 +22,15 @@ logger = logging.getLogger(__name__)
 class ARGS:
     def __init__(self):
         self.dataset = 'CIFAR10'  # 'MNIST' - 'CIFAR10' - 'CelebA'
-        self.model = 'ConvNet'  # 'ConvNet' - 'ResNet'
+        self.model = 'ConvNet'     # 'ConvNet' - 'ResNet'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.num_clients = 10
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.local_epochs = 10
+        self.local_epochs = 1
         self.lr = 0.01
         self.batch_size = 64
         self.num_rounds = 50
         self.honesty_ratio = 1  # Ratio of Honest Clients
-        self.num_workers = 0  # Set to 0 for multiprocessing compatibility
 
         if self.dataset == 'MNIST':
             self.channel = 1
@@ -57,49 +57,66 @@ def randomize_labels(dataset):
         randomized_dataset.labels = labels
     return randomized_dataset
 
-def client_train_wrapper(client):
-    client_model = client.train()
-    client_size = len(client.train_loader.dataset)
-    return client_model, client_size
+def client_train_worker(args_tuple):
+    client_id, train_data, args_dict, global_model_state = args_tuple
+    try:
+        # Reconstruct ARGS instance from args_dict
+        args = ARGS()
+        args.__dict__.update(args_dict)
+        # Initialize the client inside the worker process
+        client = Client(client_id, train_data, args)
+        client.set_model(global_model_state)
+        client_model = client.train()
+        client_size = len(client.train_loader.dataset)
+        logger.info(f"Client {client_id} finished training.")
+        return client_model, client_size
+    except Exception as e:
+        logger.exception(f"Exception in client {client_id}: {e}")
+        return None, 0
 
 def main():
     args = ARGS()
     logger.info("Starting Federated Learning with %d clients", args.num_clients)
 
     # Load data and distribute to clients
-    client_datasets, test_loader = load_data(dataset=args.dataset, alpha=args.alpha, num_clients=args.num_clients)
+    client_datasets, test_loader = load_data(
+        dataset=args.dataset,
+        alpha=args.alpha,
+        num_clients=args.num_clients
+    )
     logger.info("Data loaded and distributed to clients.")
 
-    # Initialize server and clients
+    # Initialize server
     server = Server(args)
 
     # Determine which clients are honest and which are dishonest
     num_honest_clients = int(args.honesty_ratio * args.num_clients)
     honest_clients = random.sample(range(args.num_clients), num_honest_clients)
-    clients = []
 
-    for i in range(args.num_clients):
-        train_data = client_datasets[i]
-        if i not in honest_clients:
-            logger.info("Client %d is dishonest and will have randomized labels.", i)
-            train_data = randomize_labels(train_data)  # Apply label switching
-        clients.append(Client(client_id=i, train_data=train_data, args=args))
+    # Prepare arguments for each client
+    args_dict = vars(args)  # Convert ARGS instance to a dictionary
 
-    # Lists to collect test accuracies and confusion matrices
+    # Lists to collect test accuracies
     test_accuracies = []
 
     # Federated learning rounds
     for round_num in range(1, args.num_rounds + 1):
         logger.info("\n--- Round %d ---", round_num)
 
-        # Distribute global model to clients
-        global_model = server.get_global_model()
-        for client in clients:
-            client.set_model(global_model)
+        # Get the global model state
+        global_model_state = server.get_global_model_state()
+
+        # Prepare client arguments for multiprocessing
+        client_args = []
+        for client_id, train_data in enumerate(client_datasets):
+            if client_id not in honest_clients:
+                logger.info("Client %d is dishonest and will have randomized labels.", client_id)
+                train_data = randomize_labels(train_data)  # Apply label switching
+            client_args.append((client_id, train_data, args_dict, global_model_state))
 
         # Clients perform local training in parallel
         with multiprocessing.Pool(processes=args.num_clients) as pool:
-            results = pool.map(client_train_wrapper, clients)
+            results = pool.map(client_train_worker, client_args)
 
         client_models, client_sizes = zip(*results)
 
