@@ -2,6 +2,7 @@
 
 import torch
 import logging
+from utils.utils_fedavg import get_network
 
 logger = logging.getLogger(__name__)
 
