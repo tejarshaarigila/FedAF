@@ -1,5 +1,6 @@
 import os
 import torch
+import multiprocessing
 import numpy as np
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
