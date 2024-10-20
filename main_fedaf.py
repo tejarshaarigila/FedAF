@@ -1,13 +1,14 @@
+# main_fedaf.py
+
 import os
 import torch
-import multiprocessing
 import numpy as np
-from client.client_fedaf import Client
-from server.server_fedaf import server_update
-from utils.utils_fedaf import get_dataset, get_network
-from multiprocessing import Pool
 import logging
 import multiprocessing
+from client.client_fedaf import Client
+from server.server_fedaf import server_update
+from utils.utils_fedaf import load_data, get_network
+from multiprocessing import Pool
 
 # Configure logging
 logging.basicConfig(
@@ -79,48 +80,46 @@ def simulate():
     os.makedirs(args.save_image_dir, exist_ok=True)
 
     # Load and partition the dataset
-    channel, im_size, num_classes, class_names, mean, std, dst_train, _, _ = get_dataset(
+    client_datasets, test_loader = load_data(
         dataset=args.dataset,
-        data_path=args.data_path,
-        num_partitions=args.num_partitions,
-        alpha=args.alpha
+        alpha=args.alpha,
+        num_clients=args.num_partitions,
+        seed=42  # For reproducibility
     )
-    args.channel = channel
-    args.im_size = im_size
-    args.num_classes = num_classes
-    args.class_names = class_names
-    args.mean = mean
-    args.std = std
+    args.channel = client_datasets[0][0][0].shape[0]
+    args.im_size = client_datasets[0][0][0].shape[1:]
+    args.num_classes = len(np.unique([label for _, label in client_datasets[0]]))
 
     # Initialize the global model and save it
     if not os.path.exists(os.path.join(args.model_dir, 'fedaf_global_model_0.pth')):
         logger.info("[+] Initializing Global Model")
         initialize_global_model(args)
 
-    # Initialize clients with their respective data partitions
-    clients = []
-    for client_id, data_partition in enumerate(dst_train):
-        client = Client(client_id, data_partition, args)
-        clients.append(client)
+    args_dict = vars(args)  # Convert ARGS instance to a dictionary
 
     # Main communication rounds
     for r in range(1, rounds + 1):
         logger.info(f"---  Round: {r}/{rounds}  ---")
 
         # Step 1: Clients calculate and save their class-wise logits
-        with Pool(processes=args.num_partitions) as pool:
-            results = pool.map(calculate_and_save_logits_wrapper, [(client, r) for client in clients])
-
-        # Prepare a mapping of client IDs to logit paths
-        logit_paths = dict(results)
+        client_args = [
+            (client_id, train_data, args_dict, r)
+            for client_id, train_data in enumerate(client_datasets)
+        ]
+        with multiprocessing.Pool(processes=args.num_partitions) as pool:
+            logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
         # Step 2: Server aggregates logits and saves aggregated logits for clients
         aggregated_logits = aggregate_logits(logit_paths, args.num_classes, 'V')
         save_aggregated_logits(aggregated_logits, args, r, 'V')
 
         # Step 3: Clients perform Data Condensation on synthetic data S
-        with Pool(processes=args.num_partitions) as pool:
-            pool.map(data_condensation_wrapper, [(client, r) for client in clients])
+        client_args = [
+            (client_id, train_data, args_dict, r)
+            for client_id, train_data in enumerate(client_datasets)
+        ]
+        with multiprocessing.Pool(processes=args.num_partitions) as pool:
+            pool.map(data_condensation_worker, client_args)
 
         # Step 4: Server updates the global model using aggregated soft labels R & synthetic data S
         aggregated_labels = aggregate_logits(logit_paths, args.num_classes, 'R')
@@ -140,27 +139,44 @@ def simulate():
         )
         logger.info(f"--- Round Ended: {r}/{rounds}  ---")
 
-def calculate_and_save_logits_wrapper(args_tuple):
-    client, r = args_tuple
-    client.calculate_and_save_logits(r)
-    # Log when client completes calculating logits
-    logger.info(f"Client {client.client_id} has completed calculating and saving logits for round {r}.")
-    return client.client_id, client.logit_path
+def calculate_and_save_logits_worker(args_tuple):
+    client_id, train_data, args_dict, r = args_tuple
+    try:
+        # Reconstruct ARGS instance
+        args = ARGS()
+        args.__dict__.update(args_dict)
+        # Initialize Client
+        client = Client(client_id, train_data, args)
+        client.calculate_and_save_logits(r)
+        # Log when client completes calculating logits
+        logger.info(f"Client {client_id} has completed calculating and saving logits for round {r}.")
+        return client.logit_path
+    except Exception as e:
+        logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
+        return None
 
-def data_condensation_wrapper(args_tuple):
-    client, r = args_tuple
-    client.initialize_synthetic_data(r)
-    client.train_synthetic_data(r)
-    client.save_synthetic_data(r)
-    # Log when client completes data condensation
-    logger.info(f"Client {client.client_id} has completed data condensation for round {r}.")
+def data_condensation_worker(args_tuple):
+    client_id, train_data, args_dict, r = args_tuple
+    try:
+        # Reconstruct ARGS instance
+        args = ARGS()
+        args.__dict__.update(args_dict)
+        # Initialize Client
+        client = Client(client_id, train_data, args)
+        client.initialize_synthetic_data(r)
+        client.train_synthetic_data(r)
+        client.save_synthetic_data(r)
+        # Log when client completes data condensation
+        logger.info(f"Client {client_id} has completed data condensation for round {r}.")
+    except Exception as e:
+        logger.exception(f"Exception in client {client_id} during data condensation: {e}")
 
 def aggregate_logits(logit_paths, num_classes, v_r):
     """
     Aggregates class-wise logits from all clients using their logit paths.
 
     Args:
-        logit_paths (dict): Mapping from client_id to logit_path.
+        logit_paths (list): List of logit paths from clients.
         num_classes (int): Number of classes.
         v_r (str): Indicator for the type of logits ('V' or 'R').
 
@@ -170,7 +186,9 @@ def aggregate_logits(logit_paths, num_classes, v_r):
     aggregated_logits = [torch.zeros(num_classes) for _ in range(num_classes)]
     count = [0 for _ in range(num_classes)]
 
-    for client_id, client_logit_path in logit_paths.items():
+    for client_logit_path in logit_paths:
+        if client_logit_path is None:
+            continue
         for c in range(num_classes):
             client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
             if os.path.exists(client_Vkc_path):
@@ -179,7 +197,7 @@ def aggregate_logits(logit_paths, num_classes, v_r):
                     aggregated_logits[c] += client_logit
                     count[c] += 1
             else:
-                logger.warning(f"Server: Client {client_id} has no logits for class {c}. Skipping.")
+                logger.warning(f"Server: Missing logits for class {c} in {client_logit_path}. Skipping.")
 
     # Average the logits
     for c in range(num_classes):
