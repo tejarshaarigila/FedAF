@@ -378,3 +378,4 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, lamb
             logger.info(f"server_update: Global model updated and saved to {model_path}.")
         except Exception as e:
             logger.error(f"server_update: Error saving the global model - {e}")
+            
