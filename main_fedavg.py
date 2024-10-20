@@ -8,6 +8,7 @@ from utils.plot_utils import plot_accuracies
 import logging
 import random
 import copy
+import multiprocessing
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,6 +26,7 @@ class ARGS:
         self.batch_size = 64
         self.num_rounds = 50
         self.honesty_ratio = 1  # Ratio of Honest Clients
+        self.num_workers = 2  # Number of workers for DataLoader
 
         if self.dataset == 'MNIST':
             self.channel = 1
@@ -50,6 +52,11 @@ def randomize_labels(dataset):
     else:
         randomized_dataset.labels = labels
     return randomized_dataset
+
+def client_train_wrapper(client):
+    client_model = client.train()
+    client_size = len(client.train_loader.dataset)
+    return client_model, client_size
 
 def main():
     args = ARGS()
@@ -86,12 +93,11 @@ def main():
         for client in clients:
             client.set_model(global_model)
 
-        client_models = []
-        client_sizes = []
-        for client in clients:
-            client_model = client.train()
-            client_models.append(client_model)
-            client_sizes.append(len(client.train_loader.dataset))
+        # Clients perform local training in parallel
+        with multiprocessing.Pool(processes=args.num_clients) as pool:
+            results = pool.map(client_train_wrapper, clients)
+
+        client_models, client_sizes = zip(*results)
 
         # Server aggregates client models
         server.aggregate(client_models, client_sizes)
