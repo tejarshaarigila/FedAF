@@ -191,10 +191,13 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
             logits = model_net(images)
             probs = F.softmax(logits / temperature, dim=1)
             
-            for i in range(labels.size(0)):
-                label = labels[i].item()
-                logits_by_class[label] = torch.cat((logits_by_class[label], logits[i].unsqueeze(0)), dim=0)
-                probs_by_class[label] = torch.cat((probs_by_class[label], probs[i].unsqueeze(0)), dim=0)
+    for i in range(labels.size(0)):
+        label = labels[i].item()
+        if label < len(logits_by_class) and logits_by_class[label].size(0) > 0:
+            logits_by_class[label] = torch.cat((logits_by_class[label], logits[i].unsqueeze(0)), dim=0)
+            probs_by_class[label] = torch.cat((probs_by_class[label], probs[i].unsqueeze(0)), dim=0)
+        else:
+            logger.warning(f"Label {label} is out of range or no instances available. Skipping.")
 
     # Average logits and probabilities per class
     logits_avg = []
