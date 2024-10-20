@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH -p gpu
+#SBATCH -p intel
 #SBATCH -N 1
 #SBATCH -n 1
-#SBATCH -c 1
-#SBATCH --mem=8GB
+#SBATCH -c 10
+#SBATCH --mem=16G
 #SBATCH -t 30:00:00 
 #SBATCH -J cifar10
 #SBATCH -o slurm-%j.out
