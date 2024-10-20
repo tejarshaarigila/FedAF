@@ -1,5 +1,3 @@
-# main_fedaf.py
-
 import os
 import torch
 import multiprocessing
@@ -7,7 +5,18 @@ import numpy as np
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import get_dataset, get_network
-from multiprocessing import Pool 
+from multiprocessing import Pool
+import logging
+import multiprocessing
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='fedaf.log',
+    filemode='w'
+)
+logger = logging.getLogger(__name__)
 
 class ARGS:
     def __init__(self):
@@ -20,7 +29,7 @@ class ARGS:
         self.logits_dir = 'logits'
         self.save_image_dir = 'images'
         self.save_path = 'result'
-        self.device = 'cpu' 
+        self.device = 'cpu'
         self.rounds = 50
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
@@ -35,6 +44,7 @@ class ARGS:
         self.temperature = 2.0
         self.gamma = 0.9
         self.honesty_ratio = 1
+        self.num_workers = 0  # Set to 0 for multiprocessing compatibility
         self.model_dir = f'./models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
         if self.dataset == 'MNIST':
             self.channel = 1
@@ -50,12 +60,12 @@ def initialize_global_model(args):
     """
     Initializes a random global model and saves it so that clients can access it.
     """
-    model = get_network(args.model, args.channel, args.num_classes, args.im_size).to(args.device)
+    model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
     model_dir = args.model_dir
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
-    print(f"Global model initialized and saved to {model_path}.")
+    logger.info(f"Global model initialized and saved to {model_path}.")
 
 def simulate():
     args = ARGS()
@@ -84,7 +94,7 @@ def simulate():
 
     # Initialize the global model and save it
     if not os.path.exists(os.path.join(args.model_dir, 'fedaf_global_model_0.pth')):
-        print("[+] Initializing Global Model")
+        logger.info("[+] Initializing Global Model")
         initialize_global_model(args)
 
     # Initialize clients with their respective data partitions
@@ -95,7 +105,7 @@ def simulate():
 
     # Main communication rounds
     for r in range(1, rounds + 1):
-        print(f"---  Round: {r}/{rounds}  ---")
+        logger.info(f"---  Round: {r}/{rounds}  ---")
 
         # Step 1: Clients calculate and save their class-wise logits
         with Pool(processes=args.num_partitions) as pool:
@@ -128,11 +138,13 @@ def simulate():
             num_epochs=args.global_steps,
             device=args.device
         )
-        print(f"--- Round Ended: {r}/{rounds}  ---")
+        logger.info(f"--- Round Ended: {r}/{rounds}  ---")
 
 def calculate_and_save_logits_wrapper(args_tuple):
     client, r = args_tuple
     client.calculate_and_save_logits(r)
+    # Log when client completes calculating logits
+    logger.info(f"Client {client.client_id} has completed calculating and saving logits for round {r}.")
     return client.client_id, client.logit_path
 
 def data_condensation_wrapper(args_tuple):
@@ -140,6 +152,8 @@ def data_condensation_wrapper(args_tuple):
     client.initialize_synthetic_data(r)
     client.train_synthetic_data(r)
     client.save_synthetic_data(r)
+    # Log when client completes data condensation
+    logger.info(f"Client {client.client_id} has completed data condensation for round {r}.")
 
 def aggregate_logits(logit_paths, num_classes, v_r):
     """
@@ -165,7 +179,7 @@ def aggregate_logits(logit_paths, num_classes, v_r):
                     aggregated_logits[c] += client_logit
                     count[c] += 1
             else:
-                print(f"Server: Client {client_id} has no logits for class {c}. Skipping.")
+                logger.warning(f"Server: Client {client_id} has no logits for class {c}. Skipping.")
 
     # Average the logits
     for c in range(num_classes):
@@ -174,7 +188,7 @@ def aggregate_logits(logit_paths, num_classes, v_r):
         else:
             aggregated_logits[c] = torch.zeros(num_classes)  # Default if no clients have data for class c
 
-    print("Server: Aggregated logits computed.")
+    logger.info("Server: Aggregated logits computed.")
     return aggregated_logits
 
 def save_aggregated_logits(aggregated_logits, args, r, v_r):
@@ -185,9 +199,8 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     os.makedirs(logits_dir, exist_ok=True)
     global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
     torch.save(aggregated_logits, global_logits_path)
-    print(f"Server: Aggregated logits saved to {global_logits_path}.")
+    logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
-
     multiprocessing.set_start_method('spawn', force=True)  # Ensure compatibility across platforms
-    simulate(rounds=50)
+    simulate()
