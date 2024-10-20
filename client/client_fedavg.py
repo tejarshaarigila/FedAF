@@ -17,7 +17,7 @@ class Client:
             train_data,
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=args.num_workers  # Set num_workers here
+            num_workers=0
         )
         self.local_model = self.initialize_model()
         logger.info("Client %d initialized with model: %s", client_id, args.model)
