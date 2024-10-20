@@ -102,10 +102,10 @@ def main():
     # Federated learning rounds
     for round_num in range(1, args.num_rounds + 1):
         logger.info("\n--- Round %d ---", round_num)
-
-        # Get the global model state
+    
+        # Get the global model state and convert to CPU
         global_model_state = {k: v.cpu() for k, v in server.get_global_model_state().items()}
-
+    
         # Prepare client arguments for multiprocessing
         client_args = []
         for client_id, train_data in enumerate(client_datasets):
@@ -113,7 +113,7 @@ def main():
                 logger.info("Client %d is dishonest and will have randomized labels.", client_id)
                 train_data = randomize_labels(train_data)  # Apply label switching
             client_args.append((client_id, train_data, args_dict, global_model_state))
-
+        
         # Clients perform local training in parallel
         with multiprocessing.Pool(processes=args.num_clients) as pool:
             results = pool.map(client_train_worker, client_args)
