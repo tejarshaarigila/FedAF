@@ -45,9 +45,6 @@ class Client:
         self.global_Vc = []
         self.initialized_classes = []
 
-        # Remove model initialization from __init__
-        # self.model = self.load_global_model()
-
     def load_global_model(self):
         """
         Loads the latest global model from the server and resamples it.

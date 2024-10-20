@@ -1,5 +1,3 @@
-# main_fedavg.py
-
 import torch
 from server.server_fedavg import Server
 from client.client_fedavg import Client
@@ -9,9 +7,15 @@ import logging
 import random
 import copy
 import multiprocessing
+import os
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='fedavg.log',
+    filemode='w'
+)
 logger = logging.getLogger(__name__)
 
 class ARGS:
@@ -26,7 +30,7 @@ class ARGS:
         self.batch_size = 64
         self.num_rounds = 50
         self.honesty_ratio = 1  # Ratio of Honest Clients
-        self.num_workers = 2  # Number of workers for DataLoader
+        self.num_workers = 0  # Set to 0 for multiprocessing compatibility
 
         if self.dataset == 'MNIST':
             self.channel = 1
@@ -118,4 +122,5 @@ def main():
     logger.info("Federated Learning completed. Test accuracy graph saved.")
 
 if __name__ == "__main__":
+    multiprocessing.set_start_method('spawn', force=True)
     main()

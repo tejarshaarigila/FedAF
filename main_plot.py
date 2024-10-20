@@ -6,6 +6,16 @@ from torch.utils.data import DataLoader
 from utils.utils_fedaf import get_network
 import numpy as np
 from multiprocessing import Pool, set_start_method
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='plotting.log',
+    filemode='w'
+)
+logger = logging.getLogger(__name__)
 
 class PlotArgs:
     def __init__(self):
@@ -32,7 +42,6 @@ class PlotArgs:
             self.mean = [0.4914, 0.4822, 0.4465]
             self.std = [0.2023, 0.1994, 0.2010]
 
-
 def load_test_dataset(args):
     """Loads the test dataset based on the given dataset name."""
     transform = transforms.Compose([
@@ -47,9 +56,8 @@ def load_test_dataset(args):
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
-    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False, num_workers=0)
     return test_loader
-
 
 def evaluate_model(model, test_loader, device):
     """Evaluates the model on the test data and returns accuracy."""
@@ -66,7 +74,6 @@ def evaluate_model(model, test_loader, device):
     accuracy = 100 * correct / total
     return accuracy
 
-
 def evaluate_model_wrapper(args_tuple):
     method, model_file, round_num, args = args_tuple
     model_dir = os.path.join(args.model_base_dir)
@@ -79,9 +86,8 @@ def evaluate_model_wrapper(args_tuple):
     # Evaluate the model multiple times
     round_accuracies = [evaluate_model(model, test_loader, args.device) for _ in range(args.test_repeats)]
     avg_accuracy = np.mean(round_accuracies)
-    print(f"Method: {method}, Round {round_num}: Avg Test Accuracy = {avg_accuracy:.2f}%")
+    logger.info(f"Method: {method}, Round {round_num}: Avg Test Accuracy = {avg_accuracy:.2f}%")
     return method, round_num, avg_accuracy
-
 
 def test_saved_models(args):
     # Collect all (method, model_file, round_num) tuples to evaluate
@@ -95,7 +101,7 @@ def test_saved_models(args):
                 key=lambda x: int(x.split('_')[-1].split('.')[0])
             )
         else:
-            print(f"Directory does not exist: {model_dir}")
+            logger.warning(f"Directory does not exist: {model_dir}")
             continue
 
         for model_file in model_files:
@@ -111,7 +117,7 @@ def test_saved_models(args):
     except RuntimeError:
         pass  # If the start method has already been set
 
-    with Pool(processes=os.cpu_count()) as pool:
+    with Pool(processes=args.num_user) as pool:
         results = pool.map(evaluate_model_wrapper, eval_tasks)
 
     # Collect the results
@@ -141,9 +147,12 @@ def test_saved_models(args):
     os.makedirs('plots', exist_ok=True)
     plt.savefig(plot_save_path)
     plt.show()
-    print(f"Plot saved to {plot_save_path}")
-
+    logger.info(f"Plot saved to {plot_save_path}")
 
 if __name__ == "__main__":
     args = PlotArgs()
+    try:
+        set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass
     test_saved_models(args)
