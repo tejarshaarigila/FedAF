@@ -18,14 +18,7 @@ def ensure_directory_exists(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
-def dynamic_lambda_glob_client(r, total_rounds):
-    """Dynamically adjusts lambda_glob at the client side based on the current round."""
-    max_lambda = 1.0
-    min_lambda = 0.1
-    lambda_glob = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
-    return lambda_glob
-
-def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs):
+def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
     """
     Trains the model using the provided training data loader, including LGKM loss.
 
@@ -47,8 +40,6 @@ def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device
     for epoch in range(num_epochs):
 
         running_loss = 0.0
-
-        lambda_glob = dynamic_lambda_glob_client(epoch, num_epochs)
 
         # Compute T
         T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
@@ -133,7 +124,7 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
     return T_tensor
 
-def server_update(model_name, data, num_partitions, round_num, ipc, method, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
+def server_update(model_name, data, num_partitions, round_num, ipc, method, lambda_glob, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
     """
     Aggregates synthetic data from all clients, updates the global model, evaluates it,
     and computes aggregated logits to send back to clients.
@@ -242,7 +233,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
 
     # Train the global model
     print("Server: Starting global model training.")
-    train_model(net, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs=num_epochs)
+    train_model(net, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs=num_epochs)
 
     # Evaluate the updated global model
     print("Server: Evaluating the updated global model.")

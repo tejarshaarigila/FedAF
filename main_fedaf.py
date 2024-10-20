@@ -9,7 +9,7 @@ from utils.utils_fedaf import get_dataset, get_network
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'MNIST'  # or 'MNIST'
+        self.dataset = 'CIFAR10'  # or 'MNIST'
         self.model = 'ConvNet'
         self.model_name = self.model
         self.method = 'DM'
@@ -21,12 +21,12 @@ class ARGS:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
-        self.Iteration = 1000
+        self.Iteration = 500
         self.lr_img = 1
-        self.num_partitions = 3
+        self.num_partitions = 10
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.steps = 10
-        self.local_steps = 1
+        self.steps = 1000
+        self.global_steps = 500
         self.loc_cdc = 0.8
         self.loc_lgkm = 0.8
         self.temperature = 2.0
@@ -114,9 +114,10 @@ def simulate(rounds):
             round_num=r,
             ipc=args.ipc,
             method=args.method,
+            lambda_glob=args.loc_lgkm,
             hratio=args.honesty_ratio,
             temperature=args.temperature,
-            num_epochs=args.local_steps,
+            num_epochs=args.global_steps,
             device=args.device
         )
         print(f"--- Round Ended: {r}/{rounds}  ---")

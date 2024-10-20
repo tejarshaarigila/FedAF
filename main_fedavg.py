@@ -15,15 +15,15 @@ logger = logging.getLogger(__name__)
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'MNIST'  # 'MNIST' - 'CIFAR10' - 'CelebA'
+        self.dataset = 'CIFAR10'  # 'MNIST' - 'CIFAR10' - 'CelebA'
         self.model = 'ConvNet'  # 'ConvNet' - 'ResNet'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.num_clients = 4
+        self.num_clients = 1
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.local_epochs = 10
+        self.local_epochs = 1
         self.lr = 0.01
         self.batch_size = 64
-        self.num_rounds = 20
+        self.num_rounds = 50
         self.honesty_ratio = 1  # Ratio of Honest Clients
 
         if self.dataset == 'MNIST':
@@ -86,11 +86,15 @@ def main():
         for client in clients:
             client.set_model(global_model)
 
-        # Clients perform local training
-        client_models = [client.train() for client in clients]
+        client_models = []
+        client_sizes = []
+        for client in clients:
+            client_model = client.train()
+            client_models.append(client_model)
+            client_sizes.append(len(client.train_loader.dataset))
 
         # Server aggregates client models
-        server.aggregate(client_models)
+        server.aggregate(client_models, client_sizes)
 
         # Evaluate global model on test data and save the model with the current round number
         accuracy = server.evaluate(test_loader, round_num)

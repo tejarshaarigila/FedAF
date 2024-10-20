@@ -34,19 +34,15 @@ class Server:
     def get_global_model(self):
         return self.global_model.state_dict()
 
-    def aggregate(self, client_models):
-        """Aggregates client models using FedAvg."""
+    def aggregate(self, client_models, client_sizes):
+        """Aggregates client models using weighted FedAvg."""
         logger.info("Aggregating client models.")
         global_dict = self.global_model.state_dict()
-        num_clients = len(client_models)
+        total_samples = sum(client_sizes)
         for key in global_dict.keys():
-            # Initialize the parameter with zeros
             global_dict[key] = torch.zeros_like(global_dict[key])
-            # Sum the parameters from each client
-            for client_model in client_models:
-                global_dict[key] += client_model[key]
-            # Compute the average
-            global_dict[key] = global_dict[key] / num_clients
+            for client_model, size in zip(client_models, client_sizes):
+                global_dict[key] += client_model[key] * (size / total_samples)
         self.global_model.load_state_dict(global_dict)
         logger.info("Model aggregation completed.")
 
