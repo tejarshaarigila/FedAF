@@ -192,7 +192,7 @@ def aggregate_logits(logit_paths, num_classes, v_r):
         for c in range(num_classes):
             client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
             if os.path.exists(client_Vkc_path):
-                client_logit = torch.load(client_Vkc_path, map_location='cpu')
+                client_logit = torch.load(client_Vkc_path, map_location='cpu', weights_only = True)
                 if not torch.all(client_logit == 0):
                     aggregated_logits[c] += client_logit
                     count[c] += 1
