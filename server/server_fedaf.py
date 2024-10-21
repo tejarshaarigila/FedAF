@@ -71,7 +71,7 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
     criterion_ce = nn.CrossEntropyLoss()  # Define the loss function
     optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
 
-    epsilon = 1e-8
+    epsilon = 1e-6
     rc_smooth = rc_tensor + epsilon  # Smooth rc_tensor to avoid log(0)
 
     for epoch in range(num_epochs):
@@ -82,7 +82,11 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
 
         # Compute T
         t_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
-        t_smooth = t_tensor + epsilon  # Smooth t_tensor to avoid log(0)
+        
+        valid_indices = [i for i in range(num_classes) if t_tensor[i] is not None]
+        
+        rc_tensor_filtered = torch.stack([rc_tensor[i] for i in valid_indices])
+        t_tensor_filtered = torch.stack([t_tensor[i] for i in valid_indices])
         
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -93,8 +97,8 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
 
             # Compute LGKM loss
-            kl_div1 = nn.functional.kl_div(rc_smooth.log(), t_smooth, reduction='batchmean')
-            kl_div2 = nn.functional.kl_div(t_smooth.log(), rc_smooth, reduction='batchmean')
+            kl_div1 = nn.functional.kl_div(rc_tensor_filtered.log(), t_tensor_filtered, reduction='batchmean')
+            kl_div2 = nn.functional.kl_div(t_tensor_filtered.log(), rc_tensor_filtered, reduction='batchmean')
             loss_lgkm = (kl_div1 + kl_div2) / 2
 
             # Combine the losses
@@ -158,7 +162,7 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
             t_list.append(t_c)
         else:
             # Initialize with uniform distribution if no data for class c
-            t_list.append(torch.full((num_classes,), 1.0 / num_classes, device=device))
+            t_list.append(None)
 
     t_tensor = torch.stack(t_list)  # [num_classes, num_classes]
     return t_tensor
@@ -219,8 +223,8 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
         Rc = torch.load(global_probs_path, map_location=device)
         print("Server: Loaded aggregated class-wise soft labels R(c).")
     else:
-        print("Server: No aggregated class-wise soft labels found. Initializing R(c) with zeros.")
-        Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+        print("Server: No aggregated class-wise soft labels found.")
+        Rc = [None for _ in range(num_classes)]
 
     all_images = []
     all_labels = []
