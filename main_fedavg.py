@@ -41,6 +41,23 @@ def parse_args():
                         help='Device to use (cuda or cpu)')
     return parser.parse_args()
 
+def set_dataset_params(args):
+    """Set dataset-specific parameters for the given dataset."""
+    if args.dataset == 'MNIST':
+        args.channel = 1
+        args.num_classes = 10
+        args.im_size = (28, 28)
+    elif args.dataset == 'CIFAR10':
+        args.channel = 3
+        args.num_classes = 10
+        args.im_size = (32, 32)
+    elif args.dataset == 'CelebA':
+        args.channel = 3
+        args.num_classes = 2
+        args.im_size = (64, 64)
+    else:
+        raise ValueError(f"Unsupported dataset: {args.dataset}")
+        
 def randomize_labels(dataset):
     """Randomly switch labels of the dataset."""
     randomized_dataset = copy.deepcopy(dataset)
@@ -55,6 +72,7 @@ def randomize_labels(dataset):
 
 def main():
     args = parse_args()
+    set_dataset_params(args)
     logger.info("Starting Federated Learning with %d clients", args.num_clients)
 
     # Load data and distribute to clients
