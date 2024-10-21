@@ -67,8 +67,8 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
         --model $MODEL \
-        --num_users $NUM_USERS \
-        --alpha_dirichlet $ALPHA_DIRICHLET \
+        --num_clients $NUM_USERS \
+        --alpha $ALPHA_DIRICHLET \
         --honesty_ratio $HONESTY_RATIO \
         --method fedavg &
     pid_fedavg=$!
