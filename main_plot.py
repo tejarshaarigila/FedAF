@@ -1,12 +1,15 @@
+# main_plot.py
+
 import os
 import torch
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-from utils.utils_fedaf import get_network
+from torch.utils.data import DataLoader, TensorDataset
+from utils.utils_fedaf import get_network, load_latest_model
 import numpy as np
 from multiprocessing import Pool, set_start_method
 import logging
+import argparse
 
 # Configure logging
 logging.basicConfig(
@@ -19,15 +22,50 @@ logger = logging.getLogger(__name__)
 
 class PlotArgs:
     def __init__(self):
-        self.dataset = 'CIFAR10'  # 'CIFAR10','MNIST'
-        self.model = 'ConvNet'  # 'ConvNet'
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.test_repeats = 5  # Number of times to repeat testing for averaging
-        self.num_user = 10  # Number of clients
-        self.honesty_ratio = 1  # Honesty ratio parameter
-        self.methods = ['fedaf', 'fedavg']  # Methods to compare
-        self.model_base_dir = f'./models/{self.dataset}/{self.model}/{self.num_user}/{self.honesty_ratio}/'
-
+        parser = argparse.ArgumentParser(description='Federated Learning Plotting Script')
+        
+        # Required Arguments
+        parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'MNIST'],
+                            help='Dataset name (CIFAR10 or MNIST)')
+        parser.add_argument('--model', type=str, default='ConvNet',
+                            help='Model architecture (e.g., ConvNet)')
+        parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
+                            help='Device to use (cuda or cpu)')
+        parser.add_argument('--test_repeats', type=int, default=5,
+                            help='Number of times to repeat testing for averaging')
+        parser.add_argument('--num_users', type=int, default=10,
+                            help='Number of clients')
+        parser.add_argument('--honesty_ratio', type=float, default=1.0,
+                            help='Honesty ratio parameter')
+        parser.add_argument('--alpha_dirichlet', type=float, default=0.1,
+                            help='Dirichlet distribution parameter alpha')
+        
+        # Optional Arguments
+        parser.add_argument('--methods', type=str, nargs='+', default=['fedaf', 'fedavg'],
+                            help='Methods to compare (e.g., fedaf fedavg)')
+        parser.add_argument('--model_base_dir', type=str, default=None,
+                            help='Base directory for models')
+        parser.add_argument('--save_dir', type=str, default='/home/t914a431/results/',
+                            help='Directory to save the plots')
+        
+        args = parser.parse_args()
+        
+        self.dataset = args.dataset
+        self.model = args.model
+        self.device = args.device
+        self.test_repeats = args.test_repeats
+        self.num_users = args.num_users
+        self.honesty_ratio = args.honesty_ratio
+        self.alpha_dirichlet = args.alpha_dirichlet
+        self.methods = args.methods
+        self.save_dir = args.save_dir
+        
+        # Set default model_base_dir if not provided
+        if args.model_base_dir:
+            self.model_base_dir = args.model_base_dir
+        else:
+            self.model_base_dir = os.path.join('models', self.dataset, self.model, str(self.num_users), str(self.honesty_ratio))
+        
         # Set dataset-specific parameters
         if self.dataset == 'MNIST':
             self.channel = 1
@@ -64,7 +102,7 @@ def evaluate_model(model, test_loader, device):
     model.eval()
     correct = 0
     total = 0
-    with torch.no_grad():
+    with torch.no_grad():  # No gradients needed
         for images, labels in test_loader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
@@ -78,11 +116,22 @@ def evaluate_model_wrapper(args_tuple):
     method, model_file, round_num, args = args_tuple
     model_dir = os.path.join(args.model_base_dir)
     model_path = os.path.join(model_dir, model_file)
+    
+    if not os.path.exists(model_path):
+        logger.warning(f"Model file does not exist: {model_path}")
+        return method, round_num, None  # Indicate missing model
+    
     # Instantiate the model
     model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
-    model.load_state_dict(torch.load(model_path, map_location=args.device))
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=args.device))
+    except Exception as e:
+        logger.error(f"Error loading model {model_path}: {e}")
+        return method, round_num, None
+    
     # Create the test loader
     test_loader = load_test_dataset(args)
+    
     # Evaluate the model multiple times
     round_accuracies = [evaluate_model(model, test_loader, args.device) for _ in range(args.test_repeats)]
     avg_accuracy = np.mean(round_accuracies)
@@ -98,16 +147,21 @@ def test_saved_models(args):
         if os.path.exists(model_dir):
             model_files = sorted(
                 [f for f in os.listdir(model_dir) if f.startswith(f"{method}_global_model") and f.endswith('.pth')],
-                key=lambda x: int(x.split('_')[-1].split('.')[0])
+                key=lambda x: int(x.split('_')[-1].split('.')[0])  # Extract round_num from filename
             )
         else:
             logger.warning(f"Directory does not exist: {model_dir}")
             continue
 
         for model_file in model_files:
-            round_num = int(model_file.split('_')[-1].split('.')[0])
-            if method == 'fedaf':
-                round_num += 1
+            # Extract round number from filename, assuming format "{method}_global_model_{round_num}.pth"
+            try:
+                round_num_str = model_file.split('_')[-1].split('.')[0]
+                round_num = int(round_num_str)
+            except (IndexError, ValueError):
+                logger.error(f"Invalid model filename format: {model_file}")
+                continue
+            
             eval_tasks.append((method, model_file, round_num, args))
 
     method_accuracies = {method: {} for method in args.methods}
@@ -117,17 +171,23 @@ def test_saved_models(args):
     except RuntimeError:
         pass  # If the start method has already been set
 
-    with Pool(processes=args.num_user) as pool:
+    with Pool(processes=min(args.num_users, os.cpu_count())) as pool:
         results = pool.map(evaluate_model_wrapper, eval_tasks)
 
     # Collect the results
     for method, round_num, avg_accuracy in results:
-        method_accuracies[method][round_num] = avg_accuracy
+        if avg_accuracy is not None:
+            method_accuracies[method][round_num] = avg_accuracy
+        else:
+            logger.warning(f"Skipping plot for Method: {method}, Round: {round_num} due to missing accuracy.")
 
     # Plotting the test accuracies for each method
     plt.figure(figsize=(12, 8))
 
     for method, accuracies in method_accuracies.items():
+        if not accuracies:
+            logger.warning(f"No accuracies recorded for method: {method}. Skipping plot.")
+            continue
         # Sort rounds and corresponding accuracies
         rounds = sorted(accuracies.keys())
         test_accuracies = [accuracies[r] for r in rounds]
@@ -135,24 +195,29 @@ def test_saved_models(args):
         # Plot accuracies for the current method
         plt.plot(rounds, test_accuracies, marker='o', linestyle='-', label=f"{method.upper()}")
 
-    plt.title(f"Test Accuracy over Communication Rounds\nDataset: {args.dataset}, Honesty Ratio: {args.honesty_ratio}")
+    plt.title(f"Dataset: {args.dataset}, Users: {args.num_users}, Alpha: {args.alpha_dirichlet}")
     plt.xlabel("Communication Round")
     plt.ylabel("Test Accuracy (%)")
     plt.grid(True)
-    plt.xticks(rounds)
+    
+    if rounds:
+        plt.xticks(rounds)
+    
     plt.legend()
 
+    # Ensure the save directory exists
+    ensure_save_directory = os.path.join(args.save_dir)
+    os.makedirs(ensure_save_directory, exist_ok=True)
+
     # Save and show plot
-    plot_save_path = f"plots/test_accuracy_comparison_{args.dataset}_honesty_{args.honesty_ratio}.png"
-    os.makedirs('plots', exist_ok=True)
+    plot_save_path = os.path.join(
+        args.save_dir,
+        f"{args.dataset}_{args.model}_C{args.num_users}_alpha{args.alpha_dirichlet}.png"
+    )
     plt.savefig(plot_save_path)
     plt.show()
     logger.info(f"Plot saved to {plot_save_path}")
 
 if __name__ == "__main__":
     args = PlotArgs()
-    try:
-        set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass
     test_saved_models(args)
