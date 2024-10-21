@@ -219,5 +219,4 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn', force=True)  # Ensure compatibility across platforms
     simulate()
