@@ -93,6 +93,10 @@ class Client:
         # Set normalization parameters based on dataset
         self.mean, self.std = self.set_normalization_parameters()
 
+    def has_no_data(self):
+        # Check for the presence of data (logits, labels, etc.)
+        return len(self.data) == 0  # Or a condition that applies to your case
+
     def set_normalization_parameters(self) -> tuple:
         """
         Sets the mean and standard deviation based on the dataset.
