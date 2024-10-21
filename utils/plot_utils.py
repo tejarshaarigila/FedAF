@@ -1,35 +1,48 @@
-# plot_utils.py
+# utils/plot_utils.py
 
 import matplotlib.pyplot as plt
 import os
+import logging
 
+# Set up a logger for plot_utils
+logger = logging.getLogger('FedAvg.PlotUtils')
+if not logger.handlers:
+    file_handler = logging.FileHandler("/home/t914a431/log/plot_utils.log")
+    console_handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    logger.setLevel(logging.INFO)
 
-def plot_accuracies(test_accuracies, model_name, dataset, alpha, num_clients, save_dir="visualizations"):
+def plot_accuracies(test_accuracies, model_name, dataset, alpha, num_clients):
     """
-    Plot and save the test accuracies over the federated learning rounds.
+    Plots and saves the test accuracies over communication rounds.
 
     Args:
-        test_accuracies (list of float): List of test accuracies after each round.
-        model_name (str): Name of the model used (e.g., 'ConvNet', 'ResNet').
-        dataset (str): Name of the dataset (e.g., 'CIFAR10', 'MNIST', 'CelebA').
-        alpha (float): Alpha parameter for the Dirichlet distribution.
-        num_clients (int): Number of clients in federated learning.
-        save_dir (str): Directory where the plots will be saved.
+        test_accuracies (list): List of test accuracies per round.
+        model_name (str): Name of the model architecture.
+        dataset (str): Dataset name.
+        alpha (float): Dirichlet distribution parameter.
+        num_clients (int): Number of clients.
     """
-    # Create the save directory if it doesn't exist
-    os.makedirs(save_dir, exist_ok=True)
+    try:
+        rounds = range(1, len(test_accuracies) + 1)
+        plt.figure(figsize=(10, 6))
+        plt.plot(rounds, test_accuracies, marker='o', linestyle='-')
+        plt.title(f'FedAvg Test Accuracy: {model_name} on {dataset}\nAlpha={alpha}, Clients={num_clients}')
+        plt.xlabel('Communication Round')
+        plt.ylabel('Test Accuracy (%)')
+        plt.grid(True)
 
-    # Generate the filename
-    filename = f"vis_{model_name}_{dataset}_alpha{alpha}_u{num_clients}.png"
-    save_path = os.path.join(save_dir, filename)
-
-    # Plot test accuracies
-    plt.figure(figsize=(10, 6))
-    plt.plot(test_accuracies, marker='o', linestyle='-')
-    plt.title(f"Test Accuracy over Rounds\nModel: {model_name}, Dataset: {dataset}, Alpha: {alpha}, Clients: {num_clients}")
-    plt.xlabel("Round")
-    plt.ylabel("Test Accuracy (%)")
-    plt.grid(True)
-    plt.savefig(save_path)
-    plt.close()
-    print(f"Saved test accuracy plot to {save_path}")
+        # Save the plot
+        plot_dir = "/home/t914a431/plots/"
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_filename = f'fedavg_{model_name}_{dataset}_alpha{alpha}_clients{num_clients}.png'
+        plot_path = os.path.join(plot_dir, plot_filename)
+        plt.savefig(plot_path)
+        plt.close()
+        logger.info(f"Test accuracy plot saved to {plot_path}.")
+    except Exception as e:
+        logger.error(f"Error while plotting accuracies: {e}")
