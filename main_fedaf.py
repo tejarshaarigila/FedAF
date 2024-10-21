@@ -92,7 +92,7 @@ def initialize_global_model(args):
     Initializes a random global model and saves it so that clients can access it.
     """
     model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
-    model_dir = f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
+    model_dir = f'/home/t914a431/models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
