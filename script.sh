@@ -41,7 +41,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "Starting experiments for NUM_USERS=${NUM_USERS}"
     echo "========================================"
 
-    MODEL_BASE_DIR="./models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
+    MODEL_BASE_DIR="/home/t914a431/models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
 
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
     srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_FEDAF \
@@ -49,7 +49,8 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --model $MODEL \
         --num_partitions $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO &
+        --honesty_ratio $HONESTY_RATIO \
+        --save_path "$MODEL_BASE_DIR" &
     pid_fedaf=$!
 
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
@@ -58,7 +59,8 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --model $MODEL \
         --num_clients $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO &
+        --honesty_ratio $HONESTY_RATIO \
+        --model_base_dir "$MODEL_BASE_DIR" &
     pid_fedavg=$!
 
     wait $pid_fedaf
@@ -85,7 +87,8 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --num_users $NUM_USERS \
         --alpha_dirichlet $ALPHA_DIRICHLET \
         --honesty_ratio $HONESTY_RATIO \
-        --save_dir $SAVE_DIR
+        --model_base_dir "$MODEL_BASE_DIR" \
+        --save_dir "$SAVE_DIR"
 
     if [ $? -ne 0 ]; then
         echo "Error: Plot script failed for NUM_USERS=${NUM_USERS}."
