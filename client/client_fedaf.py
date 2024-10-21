@@ -41,26 +41,38 @@ class Client:
         self.data_partition = data_partition
         self.args = args_dict
 
+        # Required configurations
+        required_args = [
+            'device', 'dataset', 'model', 'num_classes',
+            'channel', 'im_size', 'ipc', 'temperature',
+            'gamma', 'method', 'save_image_dir',
+            'save_path', 'logits_dir'
+        ]
+        missing_args = [arg for arg in required_args if arg not in self.args]
+        if missing_args:
+            logger.error(f"Client {self.client_id}: Missing required arguments: {missing_args}")
+            raise ValueError(f"Missing required arguments: {missing_args}")
+
         # Device configuration
-        self.device = torch.device(self.args.get('device', 'cpu'))
+        self.device = torch.device(self.args['device'])
 
         # Dataset and model configurations (dynamically set)
-        self.dataset = self.args.get('dataset', 'CIFAR10')
-        self.model_name = self.args.get('model', 'ConvNet')
-        self.num_classes = self.args.get('num_classes', 10)
-        self.channel = self.args.get('channel', 3)
-        self.im_size = self.args.get('im_size', (32, 32))
+        self.dataset = self.args['dataset']
+        self.model_name = self.args['model']
+        self.num_classes = self.args['num_classes']
+        self.channel = self.args['channel']
+        self.im_size = self.args['im_size']
 
         # Training configurations
-        self.ipc = self.args.get('ipc', 50)  # Instances Per Class
-        self.temperature = self.args.get('temperature', 2.0)
-        self.gamma = self.args.get('gamma', 0.9)
-        self.method = self.args.get('method', 'DM')
+        self.ipc = self.args['ipc']  # Instances Per Class
+        self.temperature = self.args['temperature']
+        self.gamma = self.args['gamma']
+        self.method = self.args['method']
 
         # Paths for saving data
-        self.save_image_dir = self.args.get('save_image_dir', 'images')
-        self.save_path = self.args.get('save_path', 'result')
-        self.logits_dir = self.args.get('logits_dir', 'logits')
+        self.save_image_dir = self.args['save_image_dir']
+        self.save_path = self.args['save_path']
+        self.logits_dir = self.args['logits_dir']
 
         self.save_image_path = os.path.join(self.save_image_dir, f'Client_{self.client_id}')
         self.synthetic_data_path = os.path.join(self.save_path, f'Client_{self.client_id}')
@@ -358,11 +370,11 @@ class Client:
         """
         logger.info(f"Client {self.client_id}: Starting synthetic data training for round {round_num}.")
         try:
-            optimizer_img = optim.SGD([self.image_syn], lr=self.args.get('lr_img', 1.0), momentum=0.5)
+            optimizer_img = optim.SGD([self.image_syn], lr=self.args['lr_img'], momentum=0.5)
             logger.info(f"Client {self.client_id}: Data Condensation begins...")
 
-            for it in range(1, self.args.get('Iteration', 500) + 1):
-                if it in self.args.get('eval_it_pool', []):
+            for it in range(1, self.args['Iteration'] + 1):
+                if it in self.args['eval_it_pool']:
                     self.visualize_synthetic_data(it, round_num)
 
                 # Freeze the model parameters
@@ -377,7 +389,7 @@ class Client:
 
                 loss = torch.tensor(0.0, device=self.device)
 
-                lambda_cdc = self.dynamic_lambda_cdc(it, self.args.get('Iteration', 500) + 1)
+                lambda_cdc = self.dynamic_lambda_cdc(it, self.args['Iteration'] + 1)
 
                 for c in self.initialized_classes:
                     # Retrieve synthetic images for class c
@@ -425,7 +437,7 @@ class Client:
                 loss.backward()
                 optimizer_img.step()
 
-                if it % 10 == 0 or it == self.args.get('Iteration', 500):
+                if it % 10 == 0 or it == self.args['Iteration']:
                     logger.info(f"Client {self.client_id}: Iteration {it}, Loss: {loss.item():.4f}")
 
             # Save the final synthetic data
