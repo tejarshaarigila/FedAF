@@ -1,5 +1,6 @@
 # main_fedavg.py
 
+import os
 import argparse
 import torch
 from server.server_fedavg import Server
