@@ -9,7 +9,7 @@ from utils.utils_fedavg import load_data
 from utils.plot_utils import plot_accuracies
 import logging
 import random
-import copy
+import concurrent.futures
 
 # Ensure the log directory exists
 log_dir = "/home/t914a431/log/"
@@ -121,8 +121,9 @@ def main():
         for client in clients:
             client.set_model(global_model)
 
-        # Clients perform local training
-        client_models = [client.train() for client in clients]
+        # Clients perform local training in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_clients) as executor:
+            client_models = list(executor.map(lambda client: client.train(), clients))
 
         # Compute client sizes
         client_sizes = [len(client.train_data) for client in clients]
