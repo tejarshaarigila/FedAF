@@ -147,7 +147,8 @@ def simulate():
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
         # Step 2: Server aggregates logits and saves aggregated logits for clients
-        aggregated_logits = aggregate_logits(logit_paths, args.num_classes, 'V')
+        if all(logit_path):
+            aggregated_logits = aggregate_logits(logit_paths, args.num_classes, 'V')
         save_aggregated_logits(aggregated_logits, args, r, 'V')
 
         # Step 3: Clients perform Data Condensation on synthetic data S
