@@ -158,12 +158,11 @@ class Client:
         Args:
             round_num (int): Current round number.
         """
-        logit_path = os.path.join(
-            self.logits_dir,
-            f'Client_{self.client_id}',
+        round_logit_path = os.path.join(
+            self.logit_path,
             f'Round_{round_num}'
         )
-        os.makedirs(self.logit_path, exist_ok=True)
+        os.makedirs(self.round_logit_path, exist_ok=True)
 
         logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels for round {round_num}.")
 
@@ -173,7 +172,7 @@ class Client:
                 partition=self.data_partition,
                 num_classes=self.num_classes,
                 device=self.device,
-                path=logit_path,
+                path=round_logit_path,
                 ipc=self.ipc,
                 temperature=self.temperature
             )
