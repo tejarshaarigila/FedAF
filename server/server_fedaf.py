@@ -181,8 +181,8 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
         device (str): Device to use for training ('cuda' or 'cpu').
     """
     # Define paths and ensure directories exist
-    data_path = './data'
-    model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
+    data_path = '/home/t914a431/data'
+    model_dir = os.path.join('/home/t914a431/models', data, model_name, str(num_partitions), str(hratio))
     ensure_directory_exists(model_dir)
 
     # Load test dataset with necessary transformations
