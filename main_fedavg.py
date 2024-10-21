@@ -10,9 +10,17 @@ import logging
 import random
 import copy
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Ensure the log directory exists
+log_dir = "/home/t914a431/log/"
+os.makedirs(log_dir, exist_ok=True)
+
+# Configure logging to save log file in the specified directory
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename=os.path.join(log_dir, 'fedavg.log'),  # Log file path
+    filemode='w'
+)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Federated Learning with FedAvg")
