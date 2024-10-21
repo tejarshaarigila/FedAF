@@ -69,7 +69,7 @@ def get_args():
     parser.add_argument('--global_steps', type=int, default=500, help='Global training steps')
     parser.add_argument('--num_partitions', type=int, default=10, help='Number of client partitions')
     parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for non-IID data')
-    parser.add_argument('--honesty_ratio', type=float, default=1.0, help='Ratio of honest clients')
+    parser.add_argument('--honesty_ratio', type=int, default=1, help='Ratio of honest clients')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use: cpu or cuda')
     parser.add_argument('--lr_img', type=float, default=1.0, help='Learning rate for images')
     
