@@ -293,7 +293,7 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
                     im_size=im_size,
                     device=device
                 )
-                state_dict = torch.load(latest_model_file, map_location=device)
+                state_dict = torch.load(latest_model_file, map_location=device, weights_only=True)
                 model.load_state_dict(state_dict)
                 logger.info(f"load_latest_model: Loaded model from {latest_model_file}.")
                 return model
