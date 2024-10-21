@@ -214,38 +214,6 @@ def simulate():
 
     logger.info("Federated Aggregation-Free Learning completed. Test accuracy graph saved.")
 
-def calculate_and_save_logits(self, round_num: int):
-    """
-    Calculates class-wise averaged logits and saves them to disk.
-
-    Args:
-        round_num (int): Current round number.
-    """
-    round_logit_path = os.path.join(
-        self.logit_path,
-        f'Round_{round_num}'
-    )
-    os.makedirs(round_logit_path, exist_ok=True)
-
-    self.logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels for round {round_num}.")
-
-    try:
-        calculate_logits_labels(
-            model_net=self.model,
-            partition=self.data_partition,
-            num_classes=self.num_classes,
-            device=self.device,
-            path=round_logit_path,
-            ipc=self.ipc,
-            temperature=self.temperature
-        )
-        self.logger.info(f"Client {self.client_id}: Class-wise logits and soft labels calculated and saved at {round_logit_path}.")
-
-        # Store the round_logit_path for later retrieval
-        self.round_logit_path = round_logit_path
-    except Exception as e:
-        self.logger.error(f"Client {self.client_id}: Error calculating and saving logits - {e}")
-
 def data_condensation_worker(args_tuple):
     """
     Worker function for data condensation.
