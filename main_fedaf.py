@@ -22,6 +22,43 @@ logging.basicConfig(
     filename=os.path.join(log_dir, 'fedaf.log'),  # Log file path
     filemode='w'
 )
+logger = logging.getLogger(__name__)
+
+
+def get_dataset_config(dataset_name: str) -> dict:
+    """
+    Returns the configuration for the specified dataset.
+
+    Args:
+        dataset_name (str): Name of the dataset (e.g., 'CIFAR10', 'MNIST').
+
+    Returns:
+        dict: Configuration parameters for the dataset.
+    """
+    dataset_configs = {
+        'CIFAR10': {
+            'im_size': (32, 32),
+            'channel': 3,
+            'num_classes': 10,
+            'mean': [0.4914, 0.4822, 0.4465],
+            'std': [0.2023, 0.1994, 0.2010]
+        },
+        'MNIST': {
+            'im_size': (28, 28),
+            'channel': 1,
+            'num_classes': 10,
+            'mean': [0.1307],
+            'std': [0.3081]
+        },
+        # PENDING
+    }
+
+    config = dataset_configs.get(dataset_name.upper())
+    if config is None:
+        logger.error(f"Unsupported dataset: {dataset_name}. Supported datasets are: {list(dataset_configs.keys())}")
+        raise ValueError(f"Unsupported dataset: {dataset_name}. Supported datasets are: {list(dataset_configs.keys())}")
+    return config
+
 
 def get_args():
     parser = argparse.ArgumentParser(description="Federated Averaging with Data Condensation")
@@ -34,9 +71,20 @@ def get_args():
     parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for non-IID data')
     parser.add_argument('--honesty_ratio', type=float, default=1.0, help='Ratio of honest clients')
     parser.add_argument('--device', type=str, default='cpu', help='Device to use: cpu or cuda')
-    parser.add_argument('--lr_img', type=float, default=1, help='Learning rate for images')
+    parser.add_argument('--lr_img', type=float, default=1.0, help='Learning rate for images')
+    
+    # Added arguments
+    parser.add_argument('--gamma', type=float, default=0.9, help='Resampling factor for model parameters')
+    parser.add_argument('--method', type=str, default='DM', help='Initialization method for synthetic data: DM, Random')
+    parser.add_argument('--Iteration', type=int, default=500, help='Number of training iterations for synthetic data.')
+    parser.add_argument('--eval_it_pool', type=int, nargs='+', default=[0, 100, 200, 300, 400, 500], help='Iterations at which to evaluate and visualize synthetic data.')
+    parser.add_argument('--save_image_dir', type=str, default='images', help='Directory to save synthetic data visualizations.')
+    parser.add_argument('--save_path', type=str, default='result', help='Directory to save synthetic data.')
+    parser.add_argument('--logits_dir', type=str, default='logits', help='Directory to save logits.')
+
     args = parser.parse_args()
     return args
+
 
 def initialize_global_model(args):
     """
@@ -49,11 +97,22 @@ def initialize_global_model(args):
     torch.save(model.state_dict(), model_path)
     logger.info(f"Global model initialized and saved to {model_path}.")
 
+
 def simulate():
     args = get_args()
+    rounds = args.rounds
 
-    # Create necessary directories
-    os.makedirs(f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}', exist_ok=True)
+    # Get dataset-specific configurations
+    dataset_config = get_dataset_config(args.dataset)
+    args.im_size = dataset_config['im_size']
+    args.channel = dataset_config['channel']
+    args.num_classes = dataset_config['num_classes']
+    args.mean = dataset_config['mean']
+    args.std = dataset_config['std']
+
+    # Create necessary directories using updated configurations
+    model_dir = f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
+    os.makedirs(model_dir, exist_ok=True)
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(args.data_path, exist_ok=True)
     os.makedirs(args.logits_dir, exist_ok=True)
@@ -66,25 +125,24 @@ def simulate():
         num_clients=args.num_partitions,
         seed=42  # For reproducibility
     )
-    
-    # Update args with dataset information
-    args.channel = client_datasets[0][0][0].shape[0]
-    args.im_size = client_datasets[0][0][0].shape[1:]
-    args.num_classes = len(np.unique([label for _, label in client_datasets[0]]))
 
     # Initialize the global model and save it
-    if not os.path.exists(f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}/fedaf_global_model_0.pth'):
+    global_model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
+    if not os.path.exists(global_model_path):
         logger.info("[+] Initializing Global Model")
         initialize_global_model(args)
 
-    args_dict = vars(args)  # Convert ARGS instance to a dictionary
+    args_dict = vars(args)  # Convert args Namespace to a dictionary
 
     # Main communication rounds
-    for r in range(1, args.rounds + 1):
-        logger.info(f"---  Round: {r}/{args.rounds}  ---")
+    for r in range(1, rounds + 1):
+        logger.info(f"---  Round: {r}/{rounds}  ---")
 
         # Step 1: Clients calculate and save their class-wise logits
-        client_args = [(client_id, train_data, args_dict, r) for client_id, train_data in enumerate(client_datasets)]
+        client_args = [
+            (client_id, train_data, args_dict, r)
+            for client_id, train_data in enumerate(client_datasets)
+        ]
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
@@ -111,16 +169,23 @@ def simulate():
             num_epochs=args.global_steps,
             device=args.device
         )
-        logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
+        logger.info(f"--- Round Ended: {r}/{rounds}  ---")
+
 
 def calculate_and_save_logits_worker(args_tuple):
+    """
+    Worker function for calculating and saving logits.
+
+    Args:
+        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+
+    Returns:
+        str or None: Path to the saved logits, or None if an error occurred.
+    """
     client_id, train_data, args_dict, r = args_tuple
     try:
-        # Reconstruct ARGS instance
-        args = ARGS()
-        args.__dict__.update(args_dict)
         # Initialize Client
-        client = Client(client_id, train_data, args)
+        client = Client(client_id, train_data, args_dict)
         client.calculate_and_save_logits(r)
         # Log when client completes calculating logits
         logger.info(f"Client {client_id} has completed calculating and saving logits for round {r}.")
@@ -129,23 +194,27 @@ def calculate_and_save_logits_worker(args_tuple):
         logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
         return None
 
+
 def data_condensation_worker(args_tuple):
+    """
+    Worker function for data condensation.
+
+    Args:
+        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+    """
     client_id, train_data, args_dict, r = args_tuple
     try:
-        # Reconstruct ARGS instance
-        args = ARGS()
-        args.__dict__.update(args_dict)
         # Initialize Client
-        client = Client(client_id, train_data, args)
+        client = Client(client_id, train_data, args_dict)
         client.initialize_synthetic_data(r)
         client.train_synthetic_data(r)
-        client.save_synthetic_data(r)
         # Log when client completes data condensation
         logger.info(f"Client {client_id} has completed data condensation for round {r}.")
     except Exception as e:
         logger.exception(f"Exception in client {client_id} during data condensation: {e}")
 
-def aggregate_logits(logit_paths, num_classes, v_r):
+
+def aggregate_logits(logit_paths: list, num_classes: int, v_r: str) -> list:
     """
     Aggregates class-wise logits from all clients using their logit paths.
 
@@ -166,10 +235,13 @@ def aggregate_logits(logit_paths, num_classes, v_r):
         for c in range(num_classes):
             client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
             if os.path.exists(client_Vkc_path):
-                client_logit = torch.load(client_Vkc_path, map_location='cpu', weights_only=True)
-                if not torch.all(client_logit == 0):
-                    aggregated_logits[c] += client_logit
-                    count[c] += 1
+                try:
+                    client_logit = torch.load(client_Vkc_path, map_location='cpu')
+                    if not torch.all(client_logit == 0):
+                        aggregated_logits[c] += client_logit
+                        count[c] += 1
+                except Exception as e:
+                    logger.error(f"Server: Error loading logits for class {c} from {client_Vkc_path} - {e}")
             else:
                 logger.warning(f"Server: Missing logits for class {c} in {client_logit_path}. Skipping.")
 
@@ -183,16 +255,24 @@ def aggregate_logits(logit_paths, num_classes, v_r):
     logger.info("Server: Aggregated logits computed.")
     return aggregated_logits
 
-def save_aggregated_logits(aggregated_logits, args, r, v_r):
+
+def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str):
     """
     Saves the aggregated logits to a global directory accessible by all clients.
+
+    Args:
+        aggregated_logits (list): Aggregated logits per class.
+        args (Namespace): Parsed arguments.
+        round_num (int): Current round number.
+        v_r (str): Indicator for the type of logits ('V' or 'R').
     """
     logits_dir = os.path.join(args.logits_dir, 'Global')
     os.makedirs(logits_dir, exist_ok=True)
-    global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
+    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}c.pt')
     torch.save(aggregated_logits, global_logits_path)
     logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
 
+
 if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn', force=True)
+    multiprocessing.set_start_method('spawn', force=True)  # Ensure compatibility
     simulate()
