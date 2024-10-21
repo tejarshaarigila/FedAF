@@ -112,7 +112,7 @@ def simulate():
     args.std = dataset_config['std']
 
     # Create necessary directories using updated configurations
-    model_dir = f'model_dir = f'/home/t914a431/models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
+    model_dir = f'/home/t914a431/models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(args.logits_dir, exist_ok=True)
