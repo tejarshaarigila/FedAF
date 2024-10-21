@@ -11,18 +11,31 @@ import logging
 import random
 import concurrent.futures
 
-# Ensure the log directory exists
-log_dir = "/home/t914a431/log/"
-os.makedirs(log_dir, exist_ok=True)
+def setup_main_logger(log_dir):
+    """
+    Sets up the main logger to log to both console and file.
+    """
+    logger = logging.getLogger('FedAvg.Main')
+    logger.setLevel(logging.INFO)
 
-# Configure logging to save log file in the specified directory
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename=os.path.join(log_dir, 'fedavg.log'),  # Log file path
-    filemode='w'
-)
-logger = logging.getLogger(__name__)  # Initialize the logger here
+    # Create handlers
+    file_handler = logging.FileHandler(os.path.join(log_dir, 'fedavg.log'))
+    file_handler.setLevel(logging.INFO)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Create formatter and add to handlers
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    # Add handlers to the logger
+    if not logger.handlers:
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+
+    return logger
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Federated Learning with FedAvg")
@@ -61,7 +74,7 @@ def set_dataset_params(args):
         args.im_size = (64, 64)
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
-        
+
 def randomize_labels(dataset):
     """
     Randomizes the labels of the given dataset.
@@ -90,6 +103,14 @@ def randomize_labels(dataset):
     return dataset
 
 def main():
+    # Ensure the log directory exists
+    log_dir = "/home/t914a431/log/"
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Set up the main logger
+    logger = setup_main_logger(log_dir)
+    logger.info("FedAvg Main Logger Initialized.")
+
     args = parse_args()
     set_dataset_params(args)
     logger.info("Starting Federated Learning with %d clients", args.num_clients)
@@ -100,12 +121,14 @@ def main():
 
     # Initialize server and clients
     server = Server(args)
+    logger.info("Server initialized.")
 
     # Determine which clients are honest and which are dishonest
     random.seed(42)
     torch.manual_seed(42)
     num_honest_clients = int(args.honesty_ratio * args.num_clients)
     honest_clients = random.sample(range(args.num_clients), num_honest_clients)
+    logger.info("Honest Clients: %s", honest_clients)
     clients = []
 
     for i in range(args.num_clients):
@@ -113,9 +136,11 @@ def main():
         if i not in honest_clients:
             logger.info("Client %d is dishonest and will have randomized labels.", i)
             train_data = randomize_labels(train_data)  # Apply label switching
+        else:
+            logger.info("Client %d is honest.", i)
         clients.append(Client(client_id=i, train_data=train_data, args=args))
 
-    # Lists to collect test accuracies and confusion matrices
+    # Lists to collect test accuracies
     test_accuracies = []
 
     # Federated learning rounds
@@ -126,10 +151,13 @@ def main():
         global_model = server.get_global_model_state()
         for client in clients:
             client.set_model(global_model)
+        logger.info("Global model distributed to clients.")
 
         # Clients perform local training in parallel
         with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_clients) as executor:
+            # Execute training
             client_models = list(executor.map(train_client, clients))
+        logger.info("Clients have completed local training.")
 
         # Compute client sizes
         client_sizes = [len(client.train_data) for client in clients]
@@ -137,10 +165,16 @@ def main():
 
         # Server aggregates client models
         server.aggregate(client_models, client_sizes)
+        logger.info("Server has aggregated client models.")
 
-        # Evaluate global model on test data and save the model with the current round number
+        # Save the global model after aggregation
+        server.save_model(round_num)
+        logger.info("Global model saved after aggregation.")
+
+        # Evaluate global model on test data
         accuracy = server.evaluate(test_loader, round_num)
         test_accuracies.append(accuracy)
+        logger.info("Round %d: Global model accuracy: %.2f%%", round_num, accuracy)
 
     # Plot and save test accuracy graph
     plot_accuracies(
@@ -155,4 +189,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
