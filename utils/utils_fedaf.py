@@ -1,7 +1,6 @@
-# utils_fedaf.py
+# utils/utils_fedaf.py
 
 import time
-import random
 import os
 import numpy as np
 import torch
