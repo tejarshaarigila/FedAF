@@ -97,6 +97,7 @@ def initialize_global_model(args):
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
+    time.sleep(2)
     logger.info(f"Global model initialized and saved to {model_path}.")
 
 
