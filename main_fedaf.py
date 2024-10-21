@@ -274,5 +274,4 @@ def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: s
 
 
 if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn', force=True)  # Ensure compatibility
     simulate()
