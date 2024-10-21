@@ -74,6 +74,7 @@ def get_args():
     parser.add_argument('--lr_img', type=float, default=1.0, help='Learning rate for images')
     
     # Added arguments
+    parser.add_argument('--temperature', type=float, default=2, help='Temperature for Softmax Smoothing')
     parser.add_argument('--gamma', type=float, default=0.9, help='Resampling factor for model parameters')
     parser.add_argument('--method', type=str, default='DM', help='Initialization method for synthetic data: DM, Random')
     parser.add_argument('--Iteration', type=int, default=500, help='Number of training iterations for synthetic data.')
