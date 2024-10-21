@@ -49,8 +49,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --model $MODEL \
         --num_partitions $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO \
-        --method fedaf &
+        --honesty_ratio $HONESTY_RATIO &
     pid_fedaf=$!
 
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
@@ -59,8 +58,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --model $MODEL \
         --num_clients $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO \
-        --method fedavg &
+        --honesty_ratio $HONESTY_RATIO &
     pid_fedavg=$!
 
     wait $pid_fedaf
