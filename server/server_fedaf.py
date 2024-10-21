@@ -21,7 +21,7 @@ def ensure_directory_exists(path):
 def dynamic_lambda_glob_client(r, total_rounds):
     """Dynamically adjusts lambda_glob at the client side based on the current round."""
     max_lambda = 1.0
-    min_lambda = 0.1
+    min_lambda = 0.5
     lambda_glob = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
     return lambda_glob
 
