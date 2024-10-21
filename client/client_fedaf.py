@@ -122,7 +122,7 @@ class Client:
         logger.info(f"Client {self.client_id}: Loading global model.")
         try:
             model = load_latest_model(
-                model_dir=self.args.get(/home/t914a431/models'),
+                model_dir=f'/home/t914a431/models',
                 model_name=self.model_name,
                 channel=self.channel,
                 num_classes=self.num_classes,
