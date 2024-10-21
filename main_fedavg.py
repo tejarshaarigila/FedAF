@@ -124,7 +124,7 @@ def main():
             client.set_model(global_model)
 
         # Clients perform local training in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=args.num_clients) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_clients) as executor:
             client_models = list(executor.map(lambda client: client.train(), clients))
 
         # Compute client sizes
