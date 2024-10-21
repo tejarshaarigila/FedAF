@@ -4,6 +4,7 @@ import os
 import torch
 import numpy as np
 import logging
+import argparse
 import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
@@ -22,61 +23,37 @@ logging.basicConfig(
     filemode='w'
 )
 
-class ARGS:
-    def __init__(self):
-        self.dataset = 'CIFAR10'  # or 'MNIST'
-        self.model = 'ConvNet'
-        self.model_name = self.model
-        self.method = 'DM'
-        self.init = 'real'
-        self.data_path = 'data'
-        self.logits_dir = 'logits'
-        self.save_image_dir = 'images'
-        self.save_path = 'result'
-        self.device = 'cpu'
-        self.rounds = 50
-        self.ipc = 50  # Instances Per Class
-        self.eval_mode = 'SS'
-        self.Iteration = 500
-        self.lr_img = 1
-        self.num_partitions = 10
-        self.alpha = 0.1  # Dirichlet distribution parameter
-        self.steps = 1000
-        self.global_steps = 500
-        self.loc_cdc = 0.8
-        self.loc_lgkm = 0.8
-        self.temperature = 2.0
-        self.gamma = 0.9
-        self.honesty_ratio = 1
-        self.num_workers = 0  # Set to 0 for multiprocessing compatibility
-        self.model_dir = f'./models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
-        if self.dataset == 'MNIST':
-            self.channel = 1
-            self.num_classes = 10
-            self.im_size = (28,28)
-        elif self.dataset == 'CIFAR10':
-            self.channel = 3
-            self.num_classes = 10
-            self.im_size = (32,32)
-        self.eval_it_pool = np.arange(0, self.Iteration + 1, self.steps).tolist() if self.eval_mode in ['S', 'SS'] else [self.Iteration]
+def get_args():
+    parser = argparse.ArgumentParser(description="Federated Averaging with Data Condensation")
+    parser.add_argument('--dataset', type=str, default='CIFAR10', help='Dataset to use: MNIST, CIFAR10')
+    parser.add_argument('--model', type=str, default='ConvNet', help='Model architecture: ConvNet, ResNet')
+    parser.add_argument('--rounds', type=int, default=50, help='Number of communication rounds')
+    parser.add_argument('--ipc', type=int, default=50, help='Instances per class')
+    parser.add_argument('--global_steps', type=int, default=500, help='Global training steps')
+    parser.add_argument('--num_partitions', type=int, default=10, help='Number of client partitions')
+    parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for non-IID data')
+    parser.add_argument('--honesty_ratio', type=float, default=1.0, help='Ratio of honest clients')
+    parser.add_argument('--device', type=str, default='cpu', help='Device to use: cpu or cuda')
+    parser.add_argument('--lr_img', type=float, default=1, help='Learning rate for images')
+    args = parser.parse_args()
+    return args
 
 def initialize_global_model(args):
     """
     Initializes a random global model and saves it so that clients can access it.
     """
     model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
-    model_dir = args.model_dir
+    model_dir = f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
     logger.info(f"Global model initialized and saved to {model_path}.")
 
 def simulate():
-    args = ARGS()
-    rounds = args.rounds
+    args = get_args()
 
     # Create necessary directories
-    os.makedirs(args.model_dir, exist_ok=True)
+    os.makedirs(f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}', exist_ok=True)
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(args.data_path, exist_ok=True)
     os.makedirs(args.logits_dir, exist_ok=True)
@@ -89,26 +66,25 @@ def simulate():
         num_clients=args.num_partitions,
         seed=42  # For reproducibility
     )
+    
+    # Update args with dataset information
     args.channel = client_datasets[0][0][0].shape[0]
     args.im_size = client_datasets[0][0][0].shape[1:]
     args.num_classes = len(np.unique([label for _, label in client_datasets[0]]))
 
     # Initialize the global model and save it
-    if not os.path.exists(os.path.join(args.model_dir, 'fedaf_global_model_0.pth')):
+    if not os.path.exists(f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}/fedaf_global_model_0.pth'):
         logger.info("[+] Initializing Global Model")
         initialize_global_model(args)
 
     args_dict = vars(args)  # Convert ARGS instance to a dictionary
 
     # Main communication rounds
-    for r in range(1, rounds + 1):
-        logger.info(f"---  Round: {r}/{rounds}  ---")
+    for r in range(1, args.rounds + 1):
+        logger.info(f"---  Round: {r}/{args.rounds}  ---")
 
         # Step 1: Clients calculate and save their class-wise logits
-        client_args = [
-            (client_id, train_data, args_dict, r)
-            for client_id, train_data in enumerate(client_datasets)
-        ]
+        client_args = [(client_id, train_data, args_dict, r) for client_id, train_data in enumerate(client_datasets)]
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
@@ -117,10 +93,6 @@ def simulate():
         save_aggregated_logits(aggregated_logits, args, r, 'V')
 
         # Step 3: Clients perform Data Condensation on synthetic data S
-        client_args = [
-            (client_id, train_data, args_dict, r)
-            for client_id, train_data in enumerate(client_datasets)
-        ]
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             pool.map(data_condensation_worker, client_args)
 
@@ -139,7 +111,7 @@ def simulate():
             num_epochs=args.global_steps,
             device=args.device
         )
-        logger.info(f"--- Round Ended: {r}/{rounds}  ---")
+        logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
 
 def calculate_and_save_logits_worker(args_tuple):
     client_id, train_data, args_dict, r = args_tuple
@@ -194,7 +166,7 @@ def aggregate_logits(logit_paths, num_classes, v_r):
         for c in range(num_classes):
             client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
             if os.path.exists(client_Vkc_path):
-                client_logit = torch.load(client_Vkc_path, map_location='cpu', weights_only = True)
+                client_logit = torch.load(client_Vkc_path, map_location='cpu', weights_only=True)
                 if not torch.all(client_logit == 0):
                     aggregated_logits[c] += client_logit
                     count[c] += 1
@@ -222,4 +194,5 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
+    multiprocessing.set_start_method('spawn', force=True)
     simulate()
