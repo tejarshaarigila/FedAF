@@ -102,7 +102,7 @@ def main():
         logger.info("\n--- Round %d ---", round_num)
 
         # Distribute global model to clients
-        global_model = server.get_global_model()
+        global_model = server.get_global_model_state()
         for client in clients:
             client.set_model(global_model)
 
