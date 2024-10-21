@@ -61,7 +61,7 @@ def get_dataset_config(dataset_name: str) -> dict:
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Federated Averaging with Data Condensation")
+    parser = argparse.ArgumentParser(description="Aggregaton Free Federated Learning with Client Data Condensation")
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='Dataset to use: MNIST, CIFAR10')
     parser.add_argument('--model', type=str, default='ConvNet', help='Model architecture: ConvNet, ResNet')
     parser.add_argument('--rounds', type=int, default=50, help='Number of communication rounds')
