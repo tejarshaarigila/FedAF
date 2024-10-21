@@ -10,14 +10,17 @@ from server.server_fedaf import server_update
 from utils.utils_fedaf import load_data, get_network
 from multiprocessing import Pool
 
-# Configure logging
+# Ensure the log directory exists
+log_dir = "/home/t914a431/log/"
+os.makedirs(log_dir, exist_ok=True)
+
+# Configure logging to save log file in the specified directory
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='fedaf.log',
+    filename=os.path.join(log_dir, 'fedaf.log'),  # Log file path
     filemode='w'
 )
-logger = logging.getLogger(__name__)
 
 class ARGS:
     def __init__(self):
