@@ -105,3 +105,4 @@ class Client:
 
         self.logger.info("Client %d: Local training completed.", self.client_id)
         return self.model.state_dict()
+        
