@@ -237,47 +237,53 @@ def data_condensation_worker(args_tuple):
         logging.error(f"Client {client.id}: Error during data condensation - {str(e)}")
         return False  # Indicate failure during condensation
 
-def aggregate_logits(logit_paths: list, num_classes: int, v_r: str) -> list:
+def aggregate_logits(logit_paths: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
     """
     Aggregates class-wise logits from all clients using their logit paths.
 
     Args:
-        logit_paths (list): List of logit paths from clients.
+        logit_paths (list): List of logit file paths from clients.
         num_classes (int): Number of classes.
         v_r (str): Indicator for the type of logits ('V' or 'R').
+        device (str): Device to use for tensor operations ('cpu' or 'cuda').
 
     Returns:
         list: Aggregated logits per class.
     """
-    aggregated_logits = [torch.zeros(num_classes) for _ in range(num_classes)]
-    count = [0 for _ in range(num_classes)]
+    aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+    class_counts = [0] * num_classes  # To track non-zero logits count
 
-    for client_logit_path in logit_paths:
-        if client_logit_path is None:
+    for path in logit_paths:
+        if not os.path.exists(path):
+            logger.warning(f"Logit file {path} does not exist. Skipping.")
             continue
-        for c in range(num_classes):
-            client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
-            if os.path.exists(client_Vkc_path):
-                try:
-                    client_logit = torch.load(client_Vkc_path, map_location='cpu')
-                    if not torch.all(client_logit == 0):
-                        aggregated_logits[c] += client_logit
-                        count[c] += 1
-                except Exception as e:
-                    logger.error(f"Server: Error loading logits for class {c} from {client_Vkc_path} - {e}")
-            else:
-                logger.warning(f"Server: Missing logits for class {c} in {client_logit_path}. Skipping.")
+        try:
+            client_logits = torch.load(path, map_location=device)  # Expecting a list of tensors
+            if not isinstance(client_logits, list) or len(client_logits) != num_classes:
+                logger.warning(f"Logit file {path} is not in the expected format. Skipping.")
+                continue
 
-    # Average the logits
+            for c in range(num_classes):
+                # Check if the logit for class c is non-zero
+                if client_logits[c].sum().item() > 0:
+                    aggregated_logits[c] += client_logits[c]
+                    class_counts[c] += 1
+                else:
+                    # Skip adding if logits for class c are zero
+                    continue
+        except Exception as e:
+            logger.error(f"Error loading logit file {path}: {e}")
+            continue
+
     for c in range(num_classes):
-        if count[c] > 0:
-            aggregated_logits[c] /= count[c]
+        if class_counts[c] > 0:
+            aggregated_logits[c] /= class_counts[c]
+            logger.info(f"Aggregated logits for class {c} from {class_counts[c]} clients.")
         else:
-            aggregated_logits[c] = torch.zeros(num_classes)  # Default if no clients have data for class c
+            logger.warning(f"No valid logits for class {c} from any client. Initializing aggregated logits with zeros.")
+            # Optionally, you can keep it as zeros or handle it differently
 
-    logger.info("Server: Aggregated logits computed.")
     return aggregated_logits
-
 
 def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str):
     """
@@ -292,9 +298,11 @@ def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: s
     logits_dir = os.path.join(args.logits_dir, 'Global')
     os.makedirs(logits_dir, exist_ok=True)
     global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}c.pt')
-    torch.save(aggregated_logits, global_logits_path)
-    logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
-
+    try:
+        torch.save(aggregated_logits, global_logits_path)
+        logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
+    except Exception as e:
+        logger.error(f"Server: Error saving aggregated logits to {global_logits_path} - {e}")
 
 if __name__ == '__main__':
     simulate()
