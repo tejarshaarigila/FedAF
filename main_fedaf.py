@@ -193,3 +193,134 @@ def simulate():
         )
 
         logger.info(f"--- Round Ended: {r}/{rounds}  ---")
+
+
+def calculate_and_save_logits_worker(args_tuple):
+    """
+    Worker function for calculating and saving logits.
+
+    Args:
+        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+
+    Returns:
+        str or None: Path to the saved logits, or None if an error occurred.
+    """
+    client_id, train_data, args_dict, r = args_tuple
+    try:
+        # Initialize Client
+        client = Client(client_id, train_data, args_dict)
+        client.calculate_and_save_logits(r)
+        # Log when client completes calculating logits
+        logger.info(f"Client {client_id} has completed calculating and saving logits for round {r}.")
+        return client.logit_path
+    except Exception as e:
+        logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
+        return None
+
+
+def data_condensation_worker(args_tuple):
+    """
+    Worker function for data condensation.
+
+    Args:
+        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+
+    Returns:
+        bool: True if data condensation succeeds, False otherwise.
+    """
+    client_id, train_data, args_dict, round_num = args_tuple
+    try:
+        # Initialize Client
+        client = Client(client_id, train_data, args_dict)
+
+        # Check if the client should be skipped
+        if client.has_no_data():
+            logger.info(f"Client {client_id}: No data available or insufficient data for all classes. Skipping condensation.")
+            return False  # Indicate that condensation was skipped
+
+        # Proceed with data condensation
+        logger.info(f"Client {client_id}: Initializing synthetic data for round {round_num}.")
+        client.initialize_synthetic_data(round_num)
+
+        logger.info(f"Client {client_id}: Training synthetic data for round {round_num}.")
+        client.train_synthetic_data(round_num)
+
+        logger.info(f"Client {client_id}: Data condensation completed successfully for round {round_num}.")
+        return True  # Indicate that condensation succeeded
+
+    except Exception as e:
+        logger.exception(f"Client {client_id}: Error during data condensation - {e}")
+        return False  # Indicate failure during condensation
+
+
+def aggregate_logits(logit_paths: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
+    """
+    Aggregates class-wise logits from all clients using their logit paths.
+
+    Args:
+        logit_paths (list): List of logit file paths from clients.
+        num_classes (int): Number of classes.
+        v_r (str): Indicator for the type of logits ('V' or 'R').
+        device (str): Device to use for tensor operations ('cpu' or 'cuda').
+
+    Returns:
+        list: Aggregated logits per class.
+    """
+    aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+    class_counts = [0] * num_classes  # To track non-zero logits count
+
+    for path in logit_paths:
+        if not os.path.exists(path):
+            logger.warning(f"Logit file {path} does not exist. Skipping.")
+            continue
+        try:
+            client_logits = torch.load(path, map_location=device)  # Expecting a list of tensors
+            if not isinstance(client_logits, list) or len(client_logits) != num_classes:
+                logger.warning(f"Logit file {path} is not in the expected format. Skipping.")
+                continue
+
+            for c in range(num_classes):
+                # Check if the logit for class c is non-zero
+                if client_logits[c].sum().item() > 0:
+                    aggregated_logits[c] += client_logits[c]
+                    class_counts[c] += 1
+                else:
+                    # Skip adding if logits for class c are zero
+                    continue
+        except Exception as e:
+            logger.error(f"Error loading logit file {path}: {e}")
+            continue
+
+    for c in range(num_classes):
+        if class_counts[c] > 0:
+            aggregated_logits[c] /= class_counts[c]
+            logger.info(f"Aggregated logits for class {c} from {class_counts[c]} clients.")
+        else:
+            logger.warning(f"No valid logits for class {c} from any client. Initializing aggregated logits with zeros.")
+            # Optionally, you can keep it as zeros or handle it differently
+
+    return aggregated_logits
+
+
+def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str):
+    """
+    Saves the aggregated logits to a global directory accessible by all clients.
+
+    Args:
+        aggregated_logits (list): Aggregated logits per class.
+        args (Namespace): Parsed arguments.
+        round_num (int): Current round number.
+        v_r (str): Indicator for the type of logits ('V' or 'R').
+    """
+    logits_dir = os.path.join(args.logits_dir, 'Global')
+    os.makedirs(logits_dir, exist_ok=True)
+    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}c.pt')
+    try:
+        torch.save(aggregated_logits, global_logits_path)
+        logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
+    except Exception as e:
+        logger.error(f"Server: Error saving aggregated logits to {global_logits_path} - {e}")
+
+
+if __name__ == '__main__':
+    simulate()
