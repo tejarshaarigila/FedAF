@@ -4,7 +4,7 @@
 #SBATCH -N 1          # Number of nodes
 #SBATCH -n 2          # Number of tasks
 #SBATCH -c 10         # CPUs per task
-#SBATCH --mem=32G
+#SBATCH --mem=16G
 #SBATCH -t 30:00:00
 #SBATCH -J cifar10
 #SBATCH -o slurm-%j.out
@@ -44,7 +44,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     MODEL_BASE_DIR="/home/t914a431/models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
 
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_FEDAF \
+    srun -n 1 -c 5 --mem=8G python3 $PYTHON_FILE_FEDAF \
         --dataset $DATASET \
         --model $MODEL \
         --num_partitions $NUM_USERS \
@@ -54,7 +54,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     pid_fedaf=$!
 
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_FEDAVG \
+    srun -n 1 -c 5 --mem=8G python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
