@@ -226,6 +226,7 @@ class Client:
                 temperature=self.temperature
             )
             self.logger.info(f"Client {self.client_id}: Class-wise logits and soft labels calculated and saved.")
+            self.round_logit_path = round_logit_path
         except Exception as e:
             self.logger.error(f"Client {self.client_id}: Error calculating and saving logits - {e}")
 
