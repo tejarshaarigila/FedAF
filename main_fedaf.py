@@ -51,7 +51,7 @@ def get_dataset_config(dataset_name: str) -> dict:
             'mean': [0.1307],
             'std': [0.3081]
         },
-        # PENDING
+        # Add more datasets if needed
     }
 
     config = dataset_configs.get(dataset_name.upper())
@@ -62,7 +62,7 @@ def get_dataset_config(dataset_name: str) -> dict:
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Aggregaton Free Federated Learning with Client Data Condensation")
+    parser = argparse.ArgumentParser(description="Aggregation Free Federated Learning with Client Data Condensation")
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='Dataset to use: MNIST, CIFAR10')
     parser.add_argument('--model', type=str, default='ConvNet', help='Model architecture: ConvNet, ResNet')
     parser.add_argument('--rounds', type=int, default=50, help='Number of communication rounds')
@@ -150,159 +150,46 @@ def simulate():
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
-        # Step 2: Ensure all clients completed and aggregate logits
+        # Step 2: Aggregate logits from available clients
         valid_logit_paths = [path for path in logit_paths if path is not None]
-        if len(valid_logit_paths) == len(logit_paths):
-            aggregated_logits = aggregate_logits(valid_logit_paths, args.num_classes, 'V')
-            save_aggregated_logits(aggregated_logits, args, r, 'V')
-        else:
-            logger.error(f"Logits calculation failed for one or more clients in round {r}. Skipping round.")
-            continue  # Skip the rest of the round if logit calculation fails
-    
+        if not valid_logit_paths:
+            logger.error(f"No valid logits were calculated by any client in round {r}. Skipping round.")
+            logger.info(f"--- Round Ended: {r}/{rounds}  ---")
+            continue  # Skip the rest of the round if no logits are available
+
+        aggregated_logits = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
+        save_aggregated_logits(aggregated_logits, args, r, 'V')
+
         # Step 3: Clients perform Data Condensation on synthetic data S
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             condensation_status = pool.map(data_condensation_worker, client_args)
 
-        # Ensure Step 3 is complete before moving to Step 4
-        if all(condensation_status):
-            aggregated_labels = aggregate_logits(logit_paths, args.num_classes, 'R')
-            save_aggregated_logits(aggregated_labels, args, r, 'R')
+        # Step 4: Identify clients that succeeded in data condensation
+        successful_clients = [client_id for client_id, status in zip(range(len(client_datasets)), condensation_status) if status]
+        if not successful_clients:
+            logger.error(f"No clients succeeded in data condensation in round {r}. Skipping server update.")
+            logger.info(f"--- Round Ended: {r}/{rounds}  ---")
+            continue  # Skip the server update if no clients succeeded
 
-            # Step 4: Server updates the global model using aggregated soft labels R & synthetic data S
-            server_update(
-                model_name=args.model,
-                data=args.dataset,
-                num_partitions=args.num_partitions,
-                round_num=r,
-                ipc=args.ipc,
-                method=args.method,
-                hratio=args.honesty_ratio,
-                temperature=args.temperature,
-                num_epochs=args.global_steps,
-                device=args.device
-            )
-        else:
-            logger.error(f"Data condensation failed for one or more clients in round {r}")
-        
+        # Prepare logit paths for successful clients
+        successful_logit_paths = [logit_paths[client_id] for client_id in successful_clients]
+
+        # Step 5: Aggregate logits for labels ('R') from successful clients
+        aggregated_labels = aggregate_logits(successful_logit_paths, args.num_classes, 'R', device=args.device)
+        save_aggregated_logits(aggregated_labels, args, r, 'R')
+
+        # Step 6: Server updates the global model using aggregated soft labels R & synthetic data S
+        server_update(
+            model_name=args.model,
+            data=args.dataset,
+            num_partitions=args.num_partitions,
+            round_num=r,
+            ipc=args.ipc,
+            method=args.method,
+            hratio=args.honesty_ratio,
+            temperature=args.temperature,
+            num_epochs=args.global_steps,
+            device=args.device
+        )
+
         logger.info(f"--- Round Ended: {r}/{rounds}  ---")
-
-def calculate_and_save_logits_worker(args_tuple):
-    """
-    Worker function for calculating and saving logits.
-
-    Args:
-        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
-
-    Returns:
-        str or None: Path to the saved logits, or None if an error occurred.
-    """
-    client_id, train_data, args_dict, r = args_tuple
-    try:
-        # Initialize Client
-        client = Client(client_id, train_data, args_dict)
-        client.calculate_and_save_logits(r)
-        # Log when client completes calculating logits
-        logger.info(f"Client {client_id} has completed calculating and saving logits for round {r}.")
-        return client.logit_path
-    except Exception as e:
-        logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
-        return None
-
-def data_condensation_worker(args_tuple):
-    """
-    Worker function for data condensation.
-
-    Args:
-        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
-
-    Returns:
-        bool: True if data condensation succeeds, False otherwise.
-    """
-    try:
-        # Check if the client has any data
-        if client.has_no_data():
-            logging.info(f"Client {client.id}: No data available. Skipping condensation.")
-            return False  # Indicate that condensation was skipped
-
-        logging.info(f"Client {client.id}: Initializing synthetic data for round {round_num}.")
-        client.initialize_synthetic_data(round_num)
-
-        logging.info(f"Client {client.id}: Training synthetic data for round {round_num}.")
-        client.train_synthetic_data(round_num)
-
-        logging.info(f"Client {client.id}: Data condensation completed successfully for round {round_num}.")
-        return True  # Indicate that condensation succeeded
-
-    except Exception as e:
-        logging.error(f"Client {client.id}: Error during data condensation - {str(e)}")
-        return False  # Indicate failure during condensation
-
-def aggregate_logits(logit_paths: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
-    """
-    Aggregates class-wise logits from all clients using their logit paths.
-
-    Args:
-        logit_paths (list): List of logit file paths from clients.
-        num_classes (int): Number of classes.
-        v_r (str): Indicator for the type of logits ('V' or 'R').
-        device (str): Device to use for tensor operations ('cpu' or 'cuda').
-
-    Returns:
-        list: Aggregated logits per class.
-    """
-    aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-    class_counts = [0] * num_classes  # To track non-zero logits count
-
-    for path in logit_paths:
-        if not os.path.exists(path):
-            logger.warning(f"Logit file {path} does not exist. Skipping.")
-            continue
-        try:
-            client_logits = torch.load(path, map_location=device)  # Expecting a list of tensors
-            if not isinstance(client_logits, list) or len(client_logits) != num_classes:
-                logger.warning(f"Logit file {path} is not in the expected format. Skipping.")
-                continue
-
-            for c in range(num_classes):
-                # Check if the logit for class c is non-zero
-                if client_logits[c].sum().item() > 0:
-                    aggregated_logits[c] += client_logits[c]
-                    class_counts[c] += 1
-                else:
-                    # Skip adding if logits for class c are zero
-                    continue
-        except Exception as e:
-            logger.error(f"Error loading logit file {path}: {e}")
-            continue
-
-    for c in range(num_classes):
-        if class_counts[c] > 0:
-            aggregated_logits[c] /= class_counts[c]
-            logger.info(f"Aggregated logits for class {c} from {class_counts[c]} clients.")
-        else:
-            logger.warning(f"No valid logits for class {c} from any client. Initializing aggregated logits with zeros.")
-            # Optionally, you can keep it as zeros or handle it differently
-
-    return aggregated_logits
-
-def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str):
-    """
-    Saves the aggregated logits to a global directory accessible by all clients.
-
-    Args:
-        aggregated_logits (list): Aggregated logits per class.
-        args (Namespace): Parsed arguments.
-        round_num (int): Current round number.
-        v_r (str): Indicator for the type of logits ('V' or 'R').
-    """
-    logits_dir = os.path.join(args.logits_dir, 'Global')
-    os.makedirs(logits_dir, exist_ok=True)
-    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}c.pt')
-    try:
-        torch.save(aggregated_logits, global_logits_path)
-        logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
-    except Exception as e:
-        logger.error(f"Server: Error saving aggregated logits to {global_logits_path} - {e}")
-
-if __name__ == '__main__':
-    simulate()
