@@ -127,3 +127,4 @@ class Server:
             self.logger.info(f"Server: Global model saved to {model_path}.")
         except Exception as e:
             self.logger.error(f"Server: Error saving global model to {model_path} - {e}")
+            
