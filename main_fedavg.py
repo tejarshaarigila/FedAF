@@ -109,8 +109,12 @@ def main():
         # Clients perform local training
         client_models = [client.train() for client in clients]
 
+        # Compute client sizes
+        client_sizes = [len(client.train_data) for client in clients]
+        logger.info("Client Sizes: %s", client_sizes)
+
         # Server aggregates client models
-        server.aggregate(client_models)
+        server.aggregate(client_models, client_sizes)
 
         # Evaluate global model on test data and save the model with the current round number
         accuracy = server.evaluate(test_loader, round_num)
@@ -129,3 +133,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
