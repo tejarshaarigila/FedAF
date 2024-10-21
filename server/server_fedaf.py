@@ -261,7 +261,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     if not all_images:
         print("Server: No synthetic data aggregated from clients. Skipping model update.")
         # Initialize aggregated logits with zeros
-        aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+        aggregated_logits = [None for _ in range(num_classes)]
         return aggregated_logits
     
     # Concatenate all synthetic data
@@ -304,7 +304,12 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
     net.train()
 
-    rc_tensor = torch.stack(Rc).to(device)  # Shape: [num_classes, num_classes]
+    rc_tensor_valid = [r for r in Rc if r is not None]
+    if rc_tensor_valid:
+        rc_tensor = torch.stack(rc_tensor_valid).to(device)  # Use only valid logits
+    else:
+        print("Server: No valid Rc tensors available, skipping this round.")
+        return
 
     # Train the global model
     print("Server: Starting global model training.")
