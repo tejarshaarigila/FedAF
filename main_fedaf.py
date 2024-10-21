@@ -218,18 +218,24 @@ def data_condensation_worker(args_tuple):
     Returns:
         bool: True if data condensation succeeds, False otherwise.
     """
-    client_id, train_data, args_dict, r = args_tuple
     try:
-        # Initialize Client
-        client = Client(client_id, train_data, args_dict)
-        client.initialize_synthetic_data(r)
-        client.train_synthetic_data(r)
-        # Log when client completes data condensation
-        logger.info(f"Client {client_id} has completed data condensation for round {r}.")
-        return True
+        # Check if the client has any data
+        if client.has_no_data():
+            logging.info(f"Client {client.id}: No data available. Skipping condensation.")
+            return False  # Indicate that condensation was skipped
+
+        logging.info(f"Client {client.id}: Initializing synthetic data for round {round_num}.")
+        client.initialize_synthetic_data(round_num)
+
+        logging.info(f"Client {client.id}: Training synthetic data for round {round_num}.")
+        client.train_synthetic_data(round_num)
+
+        logging.info(f"Client {client.id}: Data condensation completed successfully for round {round_num}.")
+        return True  # Indicate that condensation succeeded
+
     except Exception as e:
-        logger.exception(f"Exception in client {client_id} during data condensation: {e}")
-        return False
+        logging.error(f"Client {client.id}: Error during data condensation - {str(e)}")
+        return False  # Indicate failure during condensation
 
 def aggregate_logits(logit_paths: list, num_classes: int, v_r: str) -> list:
     """
