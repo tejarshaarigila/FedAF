@@ -9,7 +9,7 @@ import argparse
 import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils_fedaf import load_data, get_network
+from utils.utils_fedaf import load_data, get_network, get_dataset
 from utils.plot_utils_fedaf import plot_accuracies
 from multiprocessing import Pool
 
@@ -40,8 +40,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Aggregation-Free Federated Learning with Client Data Condensation (FedAF)")
     parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'MNIST'],
                         help='Dataset to use: MNIST, CIFAR10')
-    parser.add_argument('--model', type=str, default='ConvNet', choices=['ConvNet', 'ResNet'],
-                        help='Model architecture: ConvNet, ResNet')
+    parser.add_argument('--model', type=str, default='ConvNet', choices=['ConvNet', 'ResNet18', 'MLP', 'LeNet', 'AlexNet', 'VGG11'],
+                        help='Model architecture: ConvNet, ResNet18, MLP, LeNet, AlexNet, VGG11')
     parser.add_argument('--rounds', type=int, default=50, help='Number of communication rounds')
     parser.add_argument('--ipc', type=int, default=50, help='Instances per class')
     parser.add_argument('--global_steps', type=int, default=500, help='Global training steps')
@@ -71,6 +71,12 @@ def parse_args():
                         help='Directory to save synthetic data.')
     parser.add_argument('--logits_dir', type=str, default='/home/t914a431/logits',
                         help='Directory to save logits.')
+    parser.add_argument('--models_dir', type=str, default='/home/t914a431/models',
+                        help='Directory to save models.')
+    parser.add_argument('--plots_dir', type=str, default='/home/t914a431/plots',
+                        help='Directory to save plots.')
+    parser.add_argument('--log_dir', type=str, default='/home/t914a431/log/',
+                        help='Directory to save logs.')
 
     args = parser.parse_args()
     return args
@@ -80,7 +86,7 @@ def initialize_global_model(args, logger):
     Initializes a random global model and saves it so that clients can access it.
     """
     model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
-    model_dir = os.path.join('/home/t914a431/models', args.dataset, args.model, str(args.num_partitions), str(args.honesty_ratio))
+    model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_partitions), str(args.honesty_ratio))
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
@@ -93,44 +99,43 @@ def train_client(client):
 
 def simulate():
     # Define the log directory
-    log_dir = "/home/t914a431/log/"
-    # Setup the main logger
-    logger = setup_main_logger(log_dir)
+    args = parse_args()
+    logger = setup_main_logger(args.log_dir)
     logger.info("FedAF Main Logger Initialized.")
 
-    args = parse_args()
-
     # Get dataset-specific configurations
-    dataset_config = get_dataset_config(args.dataset)
-    args.im_size = dataset_config['im_size']
-    args.channel = dataset_config['channel']
-    args.num_classes = dataset_config['num_classes']
-    args.mean = dataset_config['mean']
-    args.std = dataset_config['std']
+    channel, im_size, num_classes, class_names, mean, std, client_datasets, dst_test, test_loader = get_dataset(
+        dataset=args.dataset,
+        data_path='/home/t914a431/data',
+        num_partitions=args.num_partitions,
+        alpha=args.alpha
+    )
+    args.im_size = im_size
+    args.channel = channel
+    args.num_classes = num_classes
+    args.mean = mean
+    args.std = std
+
+    logger.info("Dataset loaded and distributed to clients.")
 
     # Create necessary directories
-    model_dir = os.path.join('/home/t914a431/models', args.dataset, args.model, str(args.num_partitions), str(args.honesty_ratio))
+    model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_partitions), str(args.honesty_ratio))
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(args.save_path, exist_ok=True)
     os.makedirs(args.logits_dir, exist_ok=True)
     os.makedirs(args.save_image_dir, exist_ok=True)
+    os.makedirs(args.plots_dir, exist_ok=True)
 
-    # Load and partition the dataset
-    client_datasets, test_loader = load_data(
-        dataset=args.dataset,
-        alpha=args.alpha,
-        num_clients=args.num_partitions,
-        seed=42  # For reproducibility
-    )
-    logger.info("Data loaded and distributed to clients.")
-
-    # Initialize the global model and save it
+    # Initialize the global model and save it if it's the first round
     global_model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     if not os.path.exists(global_model_path):
         logger.info("[+] Initializing Global Model")
         initialize_global_model(args, logger)
 
     args_dict = vars(args)  # Convert args Namespace to a dictionary
+
+    # Initialize list to store test accuracies
+    test_accuracies = []
 
     # Main communication rounds
     for r in range(1, args.rounds + 1):
@@ -176,7 +181,7 @@ def simulate():
         save_aggregated_logits(aggregated_labels, args, r, 'R', logger)
 
         # Step 6: Server updates the global model using aggregated soft labels R & synthetic data S
-        server_update(
+        server_accuracy = server_update(
             model_name=args.model,
             data=args.dataset,
             num_partitions=args.num_partitions,
@@ -192,15 +197,19 @@ def simulate():
             logger=logger
         )
 
+        # Collect test accuracy
+        test_accuracies.append(server_accuracy)
+
         logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
 
     # Plot and save test accuracy graph after all rounds
     plot_accuracies(
-        test_accuracies=[],  # Assuming you collect accuracies during server_update
+        test_accuracies=test_accuracies,  # Collected accuracies during server_update
         model_name=args.model,
         dataset=args.dataset,
         alpha=args.alpha,
-        num_partitions=args.num_partitions
+        num_partitions=args.num_partitions,
+        save_dir=args.plots_dir
     )
 
     logger.info("Federated Aggregation-Free Learning completed. Test accuracy graph saved.")
