@@ -7,6 +7,36 @@ from torch.utils.data import TensorDataset, DataLoader
 from torchvision import datasets, transforms
 from utils.utils_fedaf import load_latest_model
 import torch.optim as optim
+import torchvision.transforms as transforms
+
+def augment_data(images, augmentation_factor=2):
+    """
+    Applies data augmentation to the given set of images, considering their input dimensions.
+
+    Args:
+        images (torch.Tensor): The images to augment (shape: [N, C, H, W]).
+        augmentation_factor (int): Number of times to augment each image.
+
+    Returns:
+        torch.Tensor: Augmented images.
+    """
+    _, _, height, width = images.shape  # Extract height and width from the input images
+
+    transform = transforms.Compose([
+        transforms.RandomCrop((height, width)), 
+        transforms.RandomHorizontalFlip(), 
+        transforms.RandomRotation(degrees=15),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1)
+    ])
+    
+    augmented_images = []
+    for _ in range(augmentation_factor):
+        for img in images:
+            augmented_img = transform(img.cpu()) 
+            augmented_images.append(augmented_img)
+
+    return torch.stack(augmented_images).to(images.device)
 
 def ensure_directory_exists(path):
     """
@@ -194,7 +224,8 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
 
     all_images = []
     all_labels = []
-
+    class_counts = torch.zeros(num_classes, device=device)
+    
     # Aggregate synthetic data from all clients
     print("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
@@ -203,7 +234,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
             f'Client_{client_id}',
             f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
-
+    
         if os.path.exists(synthetic_data_filename):
             try:
                 data_dict = torch.load(synthetic_data_filename, map_location=device)
@@ -212,25 +243,56 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
                     images, labels = data_dict['images'], data_dict['labels']
                     all_images.append(images)
                     all_labels.append(labels)
+    
+                    # Update class counts
+                    for label in labels:
+                        class_counts[label] += 1
                 else:
                     print(f"Server: No valid synthetic data from Client {client_id}. Skipping.")
             except Exception as e:
                 print(f"Server: Error loading data from Client {client_id} - {e}")
         else:
             print(f"Server: No synthetic data found for Client {client_id} at {synthetic_data_filename}. Skipping.")
-
+    
     if not all_images:
         print("Server: No synthetic data aggregated from clients. Skipping model update.")
         # Initialize aggregated logits with zeros
         aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
         return aggregated_logits
-
+    
     # Concatenate all synthetic data
     all_images = torch.cat(all_images, dim=0)
     all_labels = torch.cat(all_labels, dim=0)
-
+    
+    # Handle class imbalance by augmenting underrepresented classes
+    max_class_count = class_counts.max()
+    balanced_images = []
+    balanced_labels = []
+    
+    for c in range(num_classes):
+        class_indices = (all_labels == c).nonzero(as_tuple=True)[0]
+        class_images = all_images[class_indices]
+        class_labels = all_labels[class_indices]
+    
+        if class_indices.numel() < max_class_count:
+            # Perform data augmentation to match max_class_count
+            augmentation_factor = (max_class_count // class_indices.numel()) - 1
+            augmented_images = augment_data(class_images, augmentation_factor=augmentation_factor)
+            augmented_labels = torch.full((augmented_images.size(0),), c, device=device, dtype=torch.long)
+    
+            class_images = torch.cat([class_images, augmented_images], dim=0)
+            class_labels = torch.cat([class_labels, augmented_labels], dim=0)
+    
+        balanced_images.append(class_images)
+        balanced_labels.append(class_labels)
+    
+    balanced_images = torch.cat(balanced_images, dim=0)
+    balanced_labels = torch.cat(balanced_labels, dim=0)
+    
+    print(f"Server: Class counts after augmentation: {[balanced_labels.tolist().count(i) for i in range(num_classes)]}")
+    
     # Create training dataset and loader
-    final_dataset = TensorDataset(all_images, all_labels)
+    final_dataset = TensorDataset(balanced_images, balanced_labels)
     train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
 
     # Load the latest global model
