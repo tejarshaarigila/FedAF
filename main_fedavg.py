@@ -59,16 +59,31 @@ def set_dataset_params(args):
         raise ValueError(f"Unsupported dataset: {args.dataset}")
         
 def randomize_labels(dataset):
-    """Randomly switch labels of the dataset."""
-    randomized_dataset = copy.deepcopy(dataset)
-    labels = randomized_dataset.targets if hasattr(randomized_dataset, 'targets') else randomized_dataset.labels
-    shuffled_labels = torch.randperm(len(labels))
-    labels = labels[shuffled_labels]
-    if hasattr(randomized_dataset, 'targets'):
-        randomized_dataset.targets = labels
+    """
+    Randomizes the labels of the given dataset.
+    
+    Args:
+        dataset: Dataset whose labels need to be randomized.
+    
+    Returns:
+        Dataset with randomized labels.
+    """
+    if hasattr(dataset, 'targets'):
+        original_labels = dataset.targets
+    elif hasattr(dataset, 'labels'):
+        original_labels = dataset.labels
     else:
-        randomized_dataset.labels = labels
-    return randomized_dataset
+        raise AttributeError("Dataset must have either 'targets' or 'labels' attribute.")
+
+    shuffled_indices = torch.randperm(len(original_labels))
+    randomized_labels = torch.tensor(original_labels)[shuffled_indices]
+
+    if hasattr(dataset, 'targets'):
+        dataset.targets = randomized_labels
+    else:
+        dataset.labels = randomized_labels
+
+    return dataset
 
 def main():
     args = parse_args()
