@@ -2,6 +2,7 @@
 
 import torch
 import logging
+import os
 from utils.utils_fedavg import get_network
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ class Server:
         return accuracy
 
     def save_model(self, round_num):
-        model_path = f'global_model_round_{round_num}.pth'
+        # Save model in the same directory structure as fedaf
+        model_dir = os.path.join('/home/t914a431/models', self.args.dataset, self.args.model, str(self.args.num_clients), str(self.args.honesty_ratio))
+        os.makedirs(model_dir, exist_ok=True)
+        model_path = os.path.join(model_dir, f'fedavg_global_model_round_{round_num}.pth')
         torch.save(self.model.state_dict(), model_path)
         logger.info(f"Global model saved to {model_path}")
