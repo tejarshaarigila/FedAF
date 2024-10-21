@@ -98,6 +98,8 @@ def main():
     server = Server(args)
 
     # Determine which clients are honest and which are dishonest
+    random.seed(42)
+    torch.manual_seed(42)
     num_honest_clients = int(args.honesty_ratio * args.num_clients)
     honest_clients = random.sample(range(args.num_clients), num_honest_clients)
     clients = []
