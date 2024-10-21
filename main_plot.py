@@ -15,7 +15,7 @@ import argparse
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='plotting.log',
+    filename='/home/t914a431/log/plotting.log',
     filemode='w'
 )
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class PlotArgs:
         # Optional Arguments
         parser.add_argument('--methods', type=str, nargs='+', default=['fedaf', 'fedavg'],
                             help='Methods to compare (e.g., fedaf fedavg)')
-        parser.add_argument('--model_base_dir', type=str, default=None,
+        parser.add_argument('--model_base_dir', type=str, default='/home/t914a431/models',
                             help='Base directory for models')
         parser.add_argument('--save_dir', type=str, default='/home/t914a431/results/',
                             help='Directory to save the plots')
@@ -61,10 +61,7 @@ class PlotArgs:
         self.save_dir = args.save_dir
         
         # Set default model_base_dir if not provided
-        if args.model_base_dir:
-            self.model_base_dir = args.model_base_dir
-        else:
-            self.model_base_dir = os.path.join('models', self.dataset, self.model, str(self.num_users), str(self.honesty_ratio))
+        self.model_base_dir = os.path.join(args.model_base_dir, self.dataset, self.model, str(self.num_users), str(self.honesty_ratio))
         
         # Set dataset-specific parameters
         if self.dataset == 'MNIST':
