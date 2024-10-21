@@ -96,7 +96,34 @@ def initialize_global_model(args, logger):
 def train_client(client):
     """Helper function to train a client."""
     return client.train()
+    
+def calculate_and_save_logits_worker(args_tuple):
+    """
+    Worker function for calculating and saving logits.
 
+    Args:
+        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+
+    Returns:
+        str or None: Path to the saved logits, or None if an error occurred.
+    """
+    client_id, train_data, args_dict, round_num = args_tuple
+    try:
+        # Initialize Client
+        client = Client(client_id, train_data, args_dict)
+        client.calculate_and_save_logits(round_num)
+
+        # Log when client completes calculating logits
+        logger = logging.getLogger('FedAF.Main')
+        logger.info(f"Client {client_id} has completed calculating and saving logits for round {round_num}.")
+
+        # Return the round_logit_path
+        return client.round_logit_path
+    except Exception as e:
+        logger = logging.getLogger('FedAF.Main')
+        logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
+        return None
+        
 def simulate():
     # Define the log directory
     args = parse_args()
