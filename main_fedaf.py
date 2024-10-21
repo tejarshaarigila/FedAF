@@ -194,7 +194,6 @@ def simulate():
 
         logger.info(f"--- Round Ended: {r}/{rounds}  ---")
 
-
 def calculate_and_save_logits_worker(args_tuple):
     """
     Worker function for calculating and saving logits.
@@ -216,7 +215,6 @@ def calculate_and_save_logits_worker(args_tuple):
     except Exception as e:
         logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
         return None
-
 
 def data_condensation_worker(args_tuple):
     """
@@ -253,12 +251,12 @@ def data_condensation_worker(args_tuple):
         return False  # Indicate failure during condensation
 
 
-def aggregate_logits(logit_paths: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
+def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
     """
-    Aggregates class-wise logits from all clients using their logit paths.
+    Aggregates class-wise logits from all clients using their logit directories.
 
     Args:
-        logit_paths (list): List of logit file paths from clients.
+        logit_dirs (list): List of logit directory paths from clients.
         num_classes (int): Number of classes.
         v_r (str): Indicator for the type of logits ('V' or 'R').
         device (str): Device to use for tensor operations ('cpu' or 'cuda').
@@ -269,26 +267,25 @@ def aggregate_logits(logit_paths: list, num_classes: int, v_r: str, device: str 
     aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
     class_counts = [0] * num_classes  # To track non-zero logits count
 
-    for path in logit_paths:
-        if not os.path.exists(path):
-            logger.warning(f"Logit file {path} does not exist. Skipping.")
+    for logit_dir in logit_dirs:
+        if not os.path.exists(logit_dir):
+            logger.warning(f"Logit directory {logit_dir} does not exist. Skipping.")
             continue
         try:
-            client_logits = torch.load(path, map_location=device)  # Expecting a list of tensors
-            if not isinstance(client_logits, list) or len(client_logits) != num_classes:
-                logger.warning(f"Logit file {path} is not in the expected format. Skipping.")
-                continue
-
+            # Iterate over each class's logit file
             for c in range(num_classes):
-                # Check if the logit for class c is non-zero
-                if client_logits[c].sum().item() > 0:
-                    aggregated_logits[c] += client_logits[c]
-                    class_counts[c] += 1
+                logit_file = os.path.join(logit_dir, f'Vkc_{c}.pt') if v_r == 'V' else os.path.join(logit_dir, f'Rkc_{c}.pt')
+                if os.path.isfile(logit_file):
+                    client_logit = torch.load(logit_file, map_location=device)
+                    if client_logit.sum().item() > 0:
+                        aggregated_logits[c] += client_logit
+                        class_counts[c] += 1
+                    else:
+                        continue
                 else:
-                    # Skip adding if logits for class c are zero
-                    continue
+                    logger.warning(f"Logit file {logit_file} does not exist. Skipping.")
         except Exception as e:
-            logger.error(f"Error loading logit file {path}: {e}")
+            logger.error(f"Error loading logits from directory {logit_dir}: {e}")
             continue
 
     for c in range(num_classes):
@@ -297,10 +294,9 @@ def aggregate_logits(logit_paths: list, num_classes: int, v_r: str, device: str 
             logger.info(f"Aggregated logits for class {c} from {class_counts[c]} clients.")
         else:
             logger.warning(f"No valid logits for class {c} from any client. Initializing aggregated logits with zeros.")
-            # Optionally, you can keep it as zeros or handle it differently
+            aggregated_logits[c] = torch.zeros(num_classes, device=device)
 
     return aggregated_logits
-
 
 def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str):
     """
