@@ -56,6 +56,7 @@ class Client:
         self.client_id = client_id
         self.data_partition = data_partition
         self.args = args_dict
+        self.round_logit_path = None
 
         # Setup logger
         self.logger = setup_client_logger(self.client_id)
