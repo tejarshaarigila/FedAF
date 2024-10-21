@@ -22,6 +22,7 @@ logging.basicConfig(
     filename=os.path.join(log_dir, 'fedavg.log'),  # Log file path
     filemode='w'
 )
+logger = logging.getLogger(__name__)  # Initialize the logger here
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Federated Learning with FedAvg")
