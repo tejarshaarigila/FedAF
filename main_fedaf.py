@@ -214,29 +214,37 @@ def simulate():
 
     logger.info("Federated Aggregation-Free Learning completed. Test accuracy graph saved.")
 
-def calculate_and_save_logits_worker(args_tuple):
+def calculate_and_save_logits(self, round_num: int):
     """
-    Worker function for calculating and saving logits.
-    
+    Calculates class-wise averaged logits and saves them to disk.
+
     Args:
-        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
-    
-    Returns:
-        str or None: Path to the saved logits, or None if an error occurred.
+        round_num (int): Current round number.
     """
-    client_id, train_data, args_dict, r = args_tuple
+    round_logit_path = os.path.join(
+        self.logit_path,
+        f'Round_{round_num}'
+    )
+    os.makedirs(round_logit_path, exist_ok=True)
+
+    self.logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels for round {round_num}.")
+
     try:
-        # Initialize Client
-        client = Client(client_id, train_data, args_dict)
-        client.calculate_and_save_logits(r)
-        # Log when client completes calculating logits
-        logger = logging.getLogger('FedAF.Main')
-        logger.info(f"Client {client_id} has completed calculating and saving logits for round {r}.")
-        return client.logit_path
+        calculate_logits_labels(
+            model_net=self.model,
+            partition=self.data_partition,
+            num_classes=self.num_classes,
+            device=self.device,
+            path=round_logit_path,
+            ipc=self.ipc,
+            temperature=self.temperature
+        )
+        self.logger.info(f"Client {self.client_id}: Class-wise logits and soft labels calculated and saved at {round_logit_path}.")
+
+        # Store the round_logit_path for later retrieval
+        self.round_logit_path = round_logit_path
     except Exception as e:
-        logger = logging.getLogger('FedAF.Main')
-        logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
-        return None
+        self.logger.error(f"Client {self.client_id}: Error calculating and saving logits - {e}")
 
 def data_condensation_worker(args_tuple):
     """
