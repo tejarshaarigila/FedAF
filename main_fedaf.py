@@ -140,38 +140,47 @@ def simulate():
 
         # Step 1: Clients calculate and save their class-wise logits
         client_args = [
-            (client_id, train_data, args_dict, r)
-            for client_id, train_data in enumerate(client_datasets)
+            (client_id, client_datasets[client_id], args_dict, r)
+            for client_id in range(len(client_datasets))
         ]
+        
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
-        # Step 2: Server aggregates logits and saves aggregated logits for clients
-        if all(logit_path):
+        # Step 2: Ensure all clients completed and aggregate logits
+        if all(logit_paths):
             aggregated_logits = aggregate_logits(logit_paths, args.num_classes, 'V')
-        save_aggregated_logits(aggregated_logits, args, r, 'V')
+            save_aggregated_logits(aggregated_logits, args, r, 'V')
+        else:
+            logger.error(f"Logits calculation failed for one or more clients in round {r}")
+            continue  # Skip the rest of the round if logit calculation fails
 
         # Step 3: Clients perform Data Condensation on synthetic data S
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
-            pool.map(data_condensation_worker, client_args)
+            condensation_status = pool.map(data_condensation_worker, client_args)
 
-        # Step 4: Server updates the global model using aggregated soft labels R & synthetic data S
-        aggregated_labels = aggregate_logits(logit_paths, args.num_classes, 'R')
-        save_aggregated_logits(aggregated_labels, args, r, 'R')
-        server_update(
-            model_name=args.model,
-            data=args.dataset,
-            num_partitions=args.num_partitions,
-            round_num=r,
-            ipc=args.ipc,
-            method=args.method,
-            hratio=args.honesty_ratio,
-            temperature=args.temperature,
-            num_epochs=args.global_steps,
-            device=args.device
-        )
+        # Ensure Step 3 is complete before moving to Step 4
+        if all(condensation_status):
+            aggregated_labels = aggregate_logits(logit_paths, args.num_classes, 'R')
+            save_aggregated_logits(aggregated_labels, args, r, 'R')
+
+            # Step 4: Server updates the global model using aggregated soft labels R & synthetic data S
+            server_update(
+                model_name=args.model,
+                data=args.dataset,
+                num_partitions=args.num_partitions,
+                round_num=r,
+                ipc=args.ipc,
+                method=args.method,
+                hratio=args.honesty_ratio,
+                temperature=args.temperature,
+                num_epochs=args.global_steps,
+                device=args.device
+            )
+        else:
+            logger.error(f"Data condensation failed for one or more clients in round {r}")
+        
         logger.info(f"--- Round Ended: {r}/{rounds}  ---")
-
 
 def calculate_and_save_logits_worker(args_tuple):
     """
