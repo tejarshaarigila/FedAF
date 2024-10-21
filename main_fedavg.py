@@ -41,6 +41,10 @@ def parse_args():
                         help='Device to use (cuda or cpu)')
     return parser.parse_args()
 
+def train_client(client):
+    """Helper function to train a client."""
+    return client.train()
+
 def set_dataset_params(args):
     """Set dataset-specific parameters for the given dataset."""
     if args.dataset == 'MNIST':
@@ -125,7 +129,7 @@ def main():
 
         # Clients perform local training in parallel
         with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_clients) as executor:
-            client_models = list(executor.map(lambda client: client.train(), clients))
+            client_models = list(executor.map(train_client, clients))
 
         # Compute client sizes
         client_sizes = [len(client.train_data) for client in clients]
