@@ -211,7 +211,7 @@ class Client:
     def initialize_synthetic_data(self, round_num: int):
         """
         Initializes the synthetic dataset, optionally using real data for initialization.
-
+    
         Args:
             round_num (int): Current round number.
         """
@@ -219,7 +219,7 @@ class Client:
         try:
             # Load global aggregated logits for the current round
             self.global_Vc = self.load_global_aggregated_logits(round_num)
-
+    
             # Initialize synthetic images and labels
             self.image_syn = torch.randn(
                 size=(self.num_classes * self.ipc, self.channel, *self.im_size),
@@ -228,37 +228,37 @@ class Client:
                 device=self.device
             )
             self.label_syn = torch.arange(self.num_classes).repeat(self.ipc).to(self.device, dtype=torch.long)
-
+    
             initialized_classes = []
-
+    
             if self.args.init == 'real':
-                        logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
-                        for c in range(self.num_classes):
-                            real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
-                            if real_loader is not None:
-                                try:
-                                    images, _ = next(iter(real_loader))
-                                    images = images.to(self.device)
-                                    if images.size(0) >= self.ipc:
-                                        selected_images = images[:self.ipc]
-                                        initialized_classes.append(c)
-                                        self.image_syn.data[c * self.ipc:(c + 1) * self.ipc] = selected_images.detach().data
-                                        logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with real data.")
-                                    else:
-                                        logger.warning(f"Client {self.client_id}: Not enough images for class {c}. Required at least {self.ipc}, Available: {images.size(0)}. Skipping initialization.")
-                                except StopIteration:
-                                    logger.warning(f"Client {self.client_id}: No images retrieved for class {c} in DataLoader.")
+                logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
+                for c in range(self.num_classes):
+                    real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
+                    if real_loader is not None:
+                        try:
+                            images, _ = next(iter(real_loader))
+                            images = images.to(self.device)
+                            if images.size(0) >= self.ipc:
+                                selected_images = images[:self.ipc]
+                                initialized_classes.append(c)
+                                self.image_syn.data[c * self.ipc:(c + 1) * self.ipc] = selected_images.detach().data
+                                logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with real data.")
                             else:
-                                logger.warning(f"Client {self.client_id}: No real images for class {c}, skipping initialization.")
-            
-                    if not initialized_classes:
-                        logger.info(f"Client {self.client_id}: No classes initialized with real data. Synthetic data remains randomly initialized.")
-            
-                    self.initialized_classes = initialized_classes
-            
-                except Exception as e:
-                    logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
-                    raise e
+                                logger.warning(f"Client {self.client_id}: Not enough images for class {c}. Required at least {self.ipc}, Available: {images.size(0)}. Skipping initialization.")
+                        except StopIteration:
+                            logger.warning(f"Client {self.client_id}: No images retrieved for class {c} in DataLoader.")
+                    else:
+                        logger.warning(f"Client {self.client_id}: No real images for class {c}, skipping initialization.")
+    
+            if not initialized_classes:
+                logger.info(f"Client {self.client_id}: No classes initialized with real data. Synthetic data remains randomly initialized.")
+    
+            self.initialized_classes = initialized_classes
+    
+        except Exception as e:
+            logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
+            raise e
 
     def get_images_loader(self, class_label: int, max_batch_size: int = 256) -> DataLoader or None:
         """
