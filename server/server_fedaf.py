@@ -202,10 +202,14 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     logger.info("Server: Test DataLoader created.")
 
     # Load aggregated class-wise soft labels Rc
-    global_probs_path = os.path.join('logits', 'Global', f'Round{round_num}_Global_Rc.pt')
+    global_probs_path = os.path.join('/home/t914a431/logits', 'Global', f'Round{round_num}_Global_Rc.pt')
     if os.path.exists(global_probs_path):
-        Rc = torch.load(global_probs_path, map_location=device)
-        logger.info(f"Server: Loaded aggregated class-wise soft labels R(c) from {global_probs_path}.")
+        try:
+            Rc = torch.load(global_probs_path, map_location=device)
+            logger.info(f"Server: Loaded aggregated class-wise soft labels R(c) from {global_probs_path}.")
+        except Exception as e:
+            logger.error(f"Server: Error loading aggregated class-wise soft labels - {e}")
+            Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
     else:
         logger.warning(f"Server: Aggregated class-wise soft labels not found at {global_probs_path}. Initializing with zeros.")
         Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
@@ -218,7 +222,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     logger.info("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
-            'result',
+            '/home/t914a431/result',
             f'Client_{client_id}',
             f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
@@ -354,3 +358,33 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
         logger.info(f"Server: Updated global model saved to {model_path}.")
     except Exception as e:
         logger.error(f"Server: Error saving the global model to {model_path} - {e}")
+
+    return accuracy  # Return accuracy for tracking
+
+def evaluate_model(model, test_loader, device):
+    """
+    Evaluates the model's performance on the test dataset.
+
+    Args:
+        model (torch.nn.Module): The global model to evaluate.
+        test_loader (DataLoader): DataLoader for test data.
+        device (torch.device): Device to evaluate on.
+
+    Returns:
+        float: Accuracy of the model on the test dataset.
+    """
+    model.eval()  # Set the model to evaluation mode
+    correct = 0
+    total = 0
+
+    with torch.no_grad():  # No gradients needed
+        for inputs, labels in test_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    accuracy = 100 * correct / total
+    print(f'Server: Model Accuracy on Test Data: {accuracy:.2f}%')
+    return accuracy
