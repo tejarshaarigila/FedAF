@@ -54,7 +54,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     pid_fedaf=$!
 
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 5 --mem=32G python3 $PYTHON_FILE_FEDAVG \
+    srun -n 1 -c 5 --mem=16G python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
@@ -80,7 +80,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "FedAF and FedAvg scripts completed successfully for NUM_USERS=${NUM_USERS}."
 
     echo "Running Plot: $PYTHON_FILE_PLOT for ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_PLOT \
+    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_PLOT \
         --dataset $DATASET \
         --model $MODEL \
         --num_users $NUM_USERS \
