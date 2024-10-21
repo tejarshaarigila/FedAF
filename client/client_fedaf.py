@@ -162,7 +162,7 @@ class Client:
             self.logit_path,
             f'Round_{round_num}'
         )
-        os.makedirs(self.round_logit_path, exist_ok=True)
+        os.makedirs(round_logit_path, exist_ok=True)
 
         logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels for round {round_num}.")
 
