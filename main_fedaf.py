@@ -114,7 +114,6 @@ def simulate():
     model_dir = f'./models/{args.dataset}/{args.model}/{args.num_partitions}/{args.honesty_ratio}'
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(args.save_path, exist_ok=True)
-    os.makedirs(args.data_path, exist_ok=True)
     os.makedirs(args.logits_dir, exist_ok=True)
     os.makedirs(args.save_image_dir, exist_ok=True)
 
