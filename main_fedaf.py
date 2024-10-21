@@ -79,7 +79,7 @@ def get_args():
     parser.add_argument('--temperature', type=float, default=2, help='Temperature for Softmax Smoothing')
     parser.add_argument('--gamma', type=float, default=0.9, help='Resampling factor for model parameters')
     parser.add_argument('--method', type=str, default='DM', help='Initialization method for synthetic data: DM, Random')
-    parser.add_argument('--Iteration', type=int, default=500, help='Number of training iterations for synthetic data.')
+    parser.add_argument('--Iteration', type=int, default=1000, help='Number of training iterations for synthetic data.')
     parser.add_argument('--eval_it_pool', type=int, nargs='+', default=[0, 100, 200, 300, 400, 500], help='Iterations at which to evaluate and visualize synthetic data.')
     parser.add_argument('--save_image_dir', type=str, default='/home/t914a431/images', help='Directory to save synthetic data visualizations.')
     parser.add_argument('--save_path', type=str, default='/home/t914a431/result', help='Directory to save synthetic data.')
