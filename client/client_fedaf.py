@@ -26,7 +26,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 class Client:
     def __init__(self, client_id: int, data_partition: Subset, args_dict: dict):
         """
