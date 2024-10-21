@@ -76,6 +76,7 @@ class Client:
 
         self.save_image_path = os.path.join(self.save_image_dir, f'Client_{self.client_id}')
         self.synthetic_data_path = os.path.join(self.save_path, f'Client_{self.client_id}')
+        self.logit_path = os.path.join(self.logits_dir, f'Client_{self.client_id}')
 
         # Create necessary directories
         os.makedirs(self.save_image_path, exist_ok=True)
