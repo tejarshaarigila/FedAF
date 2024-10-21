@@ -25,14 +25,14 @@ def dynamic_lambda_glob_client(r, total_rounds):
     lambda_glob = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
     return lambda_glob
 
-def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs):
+def train_model(model, train_loader, rc_tensor, num_classes, temperature, device, num_epochs):
     """
     Trains the model using the provided training data loader, including LGKM loss.
 
     Args:
         model (torch.nn.Module): The global model to train.
         train_loader (DataLoader): DataLoader for training data.
-        Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
+        rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
         num_classes (int): Number of classes.
         device (torch.device): Device to train on.
         num_epochs (int): Number of training epochs.
@@ -42,7 +42,7 @@ def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device
     optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
 
     epsilon = 1e-8
-    Rc_smooth = Rc_tensor + epsilon  # Smooth Rc_tensor to avoid log(0)
+    rc_smooth = rc_tensor + epsilon  # Smooth rc_tensor to avoid log(0)
 
     for epoch in range(num_epochs):
 
@@ -51,8 +51,8 @@ def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device
         lambda_glob = dynamic_lambda_glob_client(epoch, num_epochs)
 
         # Compute T
-        T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
-        T_smooth = T_tensor + epsilon  # Smooth T_tensor to avoid log(0)
+        t_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
+        t_smooth = t_tensor + epsilon  # Smooth t_tensor to avoid log(0)
         
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
@@ -63,8 +63,8 @@ def train_model(model, train_loader, Rc_tensor, num_classes, temperature, device
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
 
             # Compute LGKM loss
-            kl_div1 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')
-            kl_div2 = nn.functional.kl_div(T_smooth.log(), Rc_smooth, reduction='batchmean')
+            kl_div1 = nn.functional.kl_div(rc_smooth.log(), t_smooth, reduction='batchmean')
+            kl_div2 = nn.functional.kl_div(t_smooth.log(), rc_smooth, reduction='batchmean')
             loss_lgkm = (kl_div1 + kl_div2) / 2
 
             # Combine the losses
@@ -120,18 +120,18 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
                 class_logits_sum[label] += outputs[i]
                 class_counts[label] += 1
 
-    T_list = []
+    t_list = []
     for c in range(num_classes):
         if class_counts[c] > 0:
             avg_logit = class_logits_sum[c] / class_counts[c]
             t_c = nn.functional.softmax(avg_logit / temperature, dim=0).mean(dim=0)
-            T_list.append(t_c)
+            t_list.append(t_c)
         else:
             # Initialize with uniform distribution if no data for class c
-            T_list.append(torch.full((num_classes,), 1.0 / num_classes, device=device))
+            t_list.append(torch.full((num_classes,), 1.0 / num_classes, device=device))
 
-    T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
-    return T_tensor
+    t_tensor = torch.stack(t_list)  # [num_classes, num_classes]
+    return t_tensor
 
 def server_update(model_name, data, num_partitions, round_num, ipc, method, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
     """
@@ -238,11 +238,11 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
     net.train()
 
-    Rc_tensor = torch.stack(Rc).to(device)  # Shape: [num_classes, num_classes]
+    rc_tensor = torch.stack(Rc).to(device)  # Shape: [num_classes, num_classes]
 
     # Train the global model
     print("Server: Starting global model training.")
-    train_model(net, train_loader, Rc_tensor, num_classes, temperature, device, num_epochs=num_epochs)
+    train_model(net, train_loader, rc_tensor, num_classes, temperature, device, num_epochs=num_epochs)
 
     # Evaluate the updated global model
     print("Server: Evaluating the updated global model.")
