@@ -148,13 +148,14 @@ def simulate():
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
 
         # Step 2: Ensure all clients completed and aggregate logits
-        if all(logit_paths):
-            aggregated_logits = aggregate_logits(logit_paths, args.num_classes, 'V')
+        valid_logit_paths = [path for path in logit_paths if path is not None]
+        if len(valid_logit_paths) == len(logit_paths):
+            aggregated_logits = aggregate_logits(valid_logit_paths, args.num_classes, 'V')
             save_aggregated_logits(aggregated_logits, args, r, 'V')
         else:
-            logger.error(f"Logits calculation failed for one or more clients in round {r}")
+            logger.error(f"Logits calculation failed for one or more clients in round {r}. Skipping round.")
             continue  # Skip the rest of the round if logit calculation fails
-
+    
         # Step 3: Clients perform Data Condensation on synthetic data S
         with multiprocessing.Pool(processes=args.num_partitions) as pool:
             condensation_status = pool.map(data_condensation_worker, client_args)
@@ -204,13 +205,15 @@ def calculate_and_save_logits_worker(args_tuple):
         logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
         return None
 
-
 def data_condensation_worker(args_tuple):
     """
     Worker function for data condensation.
 
     Args:
         args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+
+    Returns:
+        bool: True if data condensation succeeds, False otherwise.
     """
     client_id, train_data, args_dict, r = args_tuple
     try:
@@ -220,9 +223,10 @@ def data_condensation_worker(args_tuple):
         client.train_synthetic_data(r)
         # Log when client completes data condensation
         logger.info(f"Client {client_id} has completed data condensation for round {r}.")
+        return True
     except Exception as e:
         logger.exception(f"Exception in client {client_id} during data condensation: {e}")
-
+        return False
 
 def aggregate_logits(logit_paths: list, num_classes: int, v_r: str) -> list:
     """
