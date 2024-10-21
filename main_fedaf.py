@@ -10,7 +10,7 @@ import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import load_data, get_network, get_dataset
-from utils.plot_utils_fedaf import plot_accuracies
+from utils.plot_utils import plot_accuracies
 from multiprocessing import Pool
 
 def setup_main_logger(log_dir):
