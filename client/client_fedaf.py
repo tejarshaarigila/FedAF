@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torchvision.utils import save_image
 from torch import optim
-from torch.utils.data import DataLoader, Subset  # Added missing imports
+from torch.utils.data import DataLoader, Subset
 from utils.utils_fedaf import (
     load_latest_model,
     calculate_logits_labels,
@@ -14,48 +14,92 @@ from utils.utils_fedaf import (
 )
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging to save log file in the specified directory
+log_dir = "/home/t914a431/log/"
+os.makedirs(log_dir, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename=os.path.join(log_dir, 'fedaf_client.log'),  # Log file path
+    filemode='w'
+)
 logger = logging.getLogger(__name__)
 
 
 class Client:
-    def __init__(self, client_id, data_partition, args):
+    def __init__(self, client_id: int, data_partition: Subset, args_dict: dict):
         """
         Initializes a federated learning client.
 
         Args:
             client_id (int): Unique identifier for the client.
-            data_partition (torch.utils.data.Subset): Subset of the dataset assigned to the client.
-            args (Namespace): Argument parser containing hyperparameters and configurations.
+            data_partition (Subset): Subset of the dataset assigned to the client.
+            args_dict (dict): Dictionary containing hyperparameters and configurations.
         """
         self.client_id = client_id
         self.data_partition = data_partition
-        self.args = args
-        self.device = torch.device(args.device)
-        self.num_classes = args.num_classes
-        self.channel = args.channel
-        self.im_size = args.im_size
-        self.ipc = args.ipc
-        self.temperature = args.temperature
-        self.gamma = args.gamma
-        self.method = args.method
-        self.dataset = args.dataset
-        self.model_name = args.model_name
-        self.save_image_path = os.path.join(args.save_image_dir, f'Client_{self.client_id}')
+        self.args = args_dict
 
-        self.synthetic_data_path = os.path.join(args.save_path, f'Client_{self.client_id}')
+        # Device configuration
+        self.device = torch.device(self.args.get('device', 'cpu'))
 
+        # Dataset and model configurations (dynamically set)
+        self.dataset = self.args.get('dataset', 'CIFAR10')
+        self.model_name = self.args.get('model', 'ConvNet')
+        self.num_classes = self.args.get('num_classes', 10)
+        self.channel = self.args.get('channel', 3)
+        self.im_size = self.args.get('im_size', (32, 32))
+
+        # Training configurations
+        self.ipc = self.args.get('ipc', 50)  # Instances Per Class
+        self.temperature = self.args.get('temperature', 2.0)
+        self.gamma = self.args.get('gamma', 0.9)
+        self.method = self.args.get('method', 'DM')
+
+        # Paths for saving data
+        self.save_image_dir = self.args.get('save_image_dir', 'images')
+        self.save_path = self.args.get('save_path', 'result')
+        self.logits_dir = self.args.get('logits_dir', 'logits')
+
+        self.save_image_path = os.path.join(self.save_image_dir, f'Client_{self.client_id}')
+        self.synthetic_data_path = os.path.join(self.save_path, f'Client_{self.client_id}')
+
+        # Create necessary directories
         os.makedirs(self.save_image_path, exist_ok=True)
         os.makedirs(os.path.dirname(self.synthetic_data_path), exist_ok=True)
 
-        self.synthetic_data = []
+        # Initialize synthetic data placeholders
+        self.image_syn = None
+        self.label_syn = None
         self.global_Vc = []
 
-        # Initialize the client components
+        # Initialize the global model
         self.model = self.load_global_model()
 
-    def load_global_model(self):
+        # Set normalization parameters based on dataset
+        self.mean, self.std = self.set_normalization_parameters()
+
+    def set_normalization_parameters(self) -> tuple:
+        """
+        Sets the mean and standard deviation based on the dataset.
+
+        Returns:
+            tuple: (mean list, std list)
+        """
+        if self.dataset.upper() == 'CIFAR10':
+            mean = [0.4914, 0.4822, 0.4465]
+            std = [0.2023, 0.1994, 0.2010]
+        elif self.dataset.upper() == 'MNIST':
+            mean = [0.1307]
+            std = [0.3081]
+        else:
+            mean = [0.0] * self.channel
+            std = [1.0] * self.channel
+            logger.warning(f"Client {self.client_id}: Unknown dataset '{self.dataset}'. Using default normalization.")
+        return mean, std
+
+    def load_global_model(self) -> torch.nn.Module:
         """
         Loads the latest global model from the server and resamples it.
 
@@ -64,53 +108,51 @@ class Client:
         """
         logger.info(f"Client {self.client_id}: Loading global model.")
         try:
-            model_net = load_latest_model(
-                model_dir=self.args.model_dir,
+            model = load_latest_model(
+                model_dir=self.args.get('model_dir', './models'),
                 model_name=self.model_name,
                 channel=self.channel,
                 num_classes=self.num_classes,
                 im_size=self.im_size,
                 device=self.device
             )
-            self.resample_model(model_net)
-            model_net.eval()
+            self.resample_model(model)
+            model.eval()
             logger.info(f"Client {self.client_id}: Global model loaded and resampled successfully.")
-            return model_net
+            return model
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error loading global model - {e}")
             raise e
 
-    def dynamic_lambda_cdc(self, r, total_rounds):
-        """Dynamically adjusts lambda_cdc based on the current round."""
-        max_lambda = 1.0
-        min_lambda = 0.1
-        lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
-        return lambda_cdc
-
-    def resample_model(self, model_net):
+    def resample_model(self, model: torch.nn.Module):
         """
         Resamples the model parameters with a weighted combination of current parameters and random noise.
 
         Args:
-            model_net (torch.nn.Module): The model to resample.
+            model (torch.nn.Module): The model to resample.
         """
         logger.info(f"Client {self.client_id}: Resampling model parameters.")
         with torch.no_grad():
-            for param in model_net.parameters():
+            for param in model.parameters():
                 noise = torch.randn_like(param)
                 param.data = self.gamma * param.data + (1 - self.gamma) * noise
         logger.info(f"Client {self.client_id}: Model parameters resampled.")
 
-    def calculate_and_save_logits(self, r):
+    def calculate_and_save_logits(self, round_num: int):
         """
         Calculates class-wise averaged logits and saves them to disk.
-        """
-        self.logit_path = os.path.join(
-            self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
-        )
-        os.makedirs(self.logit_path, exist_ok=True)
 
-        logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels.")
+        Args:
+            round_num (int): Current round number.
+        """
+        logit_path = os.path.join(
+            self.logits_dir,
+            f'Client_{self.client_id}',
+            f'Round_{round_num}'
+        )
+        os.makedirs(logit_path, exist_ok=True)
+
+        logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels for round {round_num}.")
 
         try:
             calculate_logits_labels(
@@ -118,7 +160,7 @@ class Client:
                 partition=self.data_partition,
                 num_classes=self.num_classes,
                 device=self.device,
-                path=self.logit_path,
+                path=logit_path,
                 ipc=self.ipc,
                 temperature=self.temperature
             )
@@ -126,15 +168,25 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error calculating and saving logits - {e}")
 
-    def load_global_aggregated_logits(self, r):
+    def load_global_aggregated_logits(self, round_num: int) -> list:
         """
         Loads the global aggregated logits from the server's global directory for the current round.
+
+        Args:
+            round_num (int): Current round number.
+
+        Returns:
+            list: Aggregated logits per class.
         """
-        global_logits_filename = f'Round{r}_Global_Vc.pt'
-        global_logits_path = os.path.join(self.args.logits_dir, 'Global', global_logits_filename)
+        global_logits_filename = f'Round{round_num}_Global_Vc.pt'
+        global_logits_path = os.path.join(
+            self.logits_dir,
+            'Global',
+            global_logits_filename
+        )
         if os.path.exists(global_logits_path):
             try:
-                aggregated_tensors = torch.load(global_logits_path, map_location=self.device, weights_only=True)
+                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)
                 logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
@@ -144,18 +196,21 @@ class Client:
             aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
         return aggregated_tensors
 
-    def initialize_synthetic_data(self, r):
+    def initialize_synthetic_data(self, round_num: int):
         """
         Initializes the synthetic dataset, optionally using real data for initialization.
+
+        Args:
+            round_num (int): Current round number.
         """
-        logger.info(f"Client {self.client_id}: Initializing synthetic data.")
+        logger.info(f"Client {self.client_id}: Initializing synthetic data for round {round_num}.")
         try:
             # Load global aggregated logits for the current round
-            self.global_Vc = self.load_global_aggregated_logits(r)
+            self.global_Vc = self.load_global_aggregated_logits(round_num)
 
             # Initialize synthetic images and labels
             self.image_syn = torch.randn(
-                size=(self.num_classes * self.ipc, self.channel, self.im_size[0], self.im_size[1]),
+                size=(self.num_classes * self.ipc, self.channel, *self.im_size),
                 dtype=torch.float,
                 requires_grad=True,
                 device=self.device
@@ -164,7 +219,7 @@ class Client:
 
             initialized_classes = []
 
-            if self.args.init == 'real':
+            if self.method.lower() in ['dm', 'real']:
                 logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
                 for c in range(self.num_classes):
                     real_loader = self.get_images_loader(c, max_batch_size=min(self.ipc, 256))
@@ -193,11 +248,9 @@ class Client:
             logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
             raise e
 
-
-    def get_images_loader(self, class_label, max_batch_size=256):
+    def get_images_loader(self, class_label: int, max_batch_size: int = 256) -> DataLoader or None:
         """
         Retrieves a DataLoader that yields a batch of images from a specified class.
-        If the number of available images is less than max_batch_size, use all available images.
 
         Args:
             class_label (int): The class label.
@@ -217,13 +270,11 @@ class Client:
 
             # Determine actual batch size
             actual_batch_size = min(len(class_indices), max_batch_size)
-            
+
             # Select indices up to the actual batch size
             selected_indices = class_indices[:actual_batch_size]
-
-            # Create a Subset for the selected indices
             class_subset_indices = [self.data_partition.indices[i] for i in selected_indices]
-            class_subset = torch.utils.data.Subset(self.data_partition.dataset, class_subset_indices)
+            class_subset = Subset(self.data_partition.dataset, class_subset_indices)
 
             # Create a DataLoader for the class subset
             class_loader = DataLoader(class_subset, batch_size=actual_batch_size, shuffle=False)
@@ -233,24 +284,23 @@ class Client:
             logger.error(f"Client {self.client_id}: Error creating DataLoader for class {class_label} - {e}")
             return None
 
-    def visualize_synthetic_data(self, iteration, mean, std, r):
+    def visualize_synthetic_data(self, iteration: int, round_num: int):
         """
         Visualizes and saves the synthetic data.
 
         Args:
             iteration (int): Current iteration number.
-            mean (list): Mean values for normalization.
-            std (list): Standard deviation values for normalization.
+            round_num (int): Current round number.
         """
         try:
             save_name = os.path.join(
                 self.save_image_path,
-                f'vis_{self.args.method}_{self.args.dataset}_{self.model_name}_round{r}_client{self.client_id}_{self.ipc}ipc_iter{iteration}.png'
+                f'vis_{self.method}_{self.dataset}_{self.model_name}_round{round_num}_client{self.client_id}_{self.ipc}ipc_iter{iteration}.png'
             )
             image_syn_vis = copy.deepcopy(self.image_syn.detach().cpu())
 
             for ch in range(self.channel):
-                image_syn_vis[:, ch] = image_syn_vis[:, ch] * std[ch] + mean[ch]
+                image_syn_vis[:, ch] = image_syn_vis[:, ch] * self.std[ch] + self.mean[ch]
 
             image_syn_vis = torch.clamp(image_syn_vis, 0.0, 1.0)
             save_image(image_syn_vis, save_name, nrow=self.ipc)
@@ -258,16 +308,19 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error visualizing synthetic data - {e}")
 
-    def save_synthetic_data(self, r):
+    def save_synthetic_data(self, round_num: int):
         """
-        Saves the synthetic dataset to disk, excludes non-initialized classes.
+        Saves the synthetic dataset to disk, excluding non-initialized classes.
+
+        Args:
+            round_num (int): Current round number.
         """
-        logger.info(f"Client {self.client_id}: Saving synthetic data.")
+        logger.info(f"Client {self.client_id}: Saving synthetic data for round {round_num}.")
         try:
             # Path to save synthetic data
             savepath = os.path.join(
                 self.synthetic_data_path,
-                f'res_{self.method}_{self.dataset}_{self.model_name}_Client{self.client_id}_{self.ipc}ipc_Round{r}.pt'
+                f'res_{self.method}_{self.dataset}_{self.model_name}_Client{self.client_id}_{self.ipc}ipc_Round{round_num}.pt'
             )
             os.makedirs(os.path.dirname(savepath), exist_ok=True)
 
@@ -296,19 +349,21 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error saving synthetic data - {e}")
 
-    def train_synthetic_data(self, r):
+    def train_synthetic_data(self, round_num: int):
         """
         Trains the synthetic data using the global aggregated logits.
-        """
-        logger.info(f"Client {self.client_id}: Starting synthetic data training.")
-        try:
-            optimizer_img = optim.SGD([self.image_syn], lr=self.args.lr_img, momentum=0.5)
-            logger.info("[X] Data Condensation begins...")
 
-            for it in range(1, self.args.Iteration + 1):
-                if it in self.args.eval_it_pool:
-                    # Visualization and saving synthetic images
-                    self.visualize_synthetic_data(it, self.args.mean, self.args.std, r)
+        Args:
+            round_num (int): Current round number.
+        """
+        logger.info(f"Client {self.client_id}: Starting synthetic data training for round {round_num}.")
+        try:
+            optimizer_img = optim.SGD([self.image_syn], lr=self.args.get('lr_img', 1.0), momentum=0.5)
+            logger.info(f"Client {self.client_id}: Data Condensation begins...")
+
+            for it in range(1, self.args.get('Iteration', 500) + 1):
+                if it in self.args.get('eval_it_pool', []):
+                    self.visualize_synthetic_data(it, round_num)
 
                 # Freeze the model parameters
                 self.model.eval()
@@ -322,7 +377,7 @@ class Client:
 
                 loss = torch.tensor(0.0, device=self.device)
 
-                lambda_cdc = self.dynamic_lambda_cdc(it, self.args.Iteration + 1)
+                lambda_cdc = self.dynamic_lambda_cdc(it, self.args.get('Iteration', 500) + 1)
 
                 for c in self.initialized_classes:
                     # Retrieve synthetic images for class c
@@ -330,7 +385,7 @@ class Client:
                     if img_syn.size(0) == 0:
                         logger.warning(f"Client {self.client_id}: No synthetic images for class {c}. Skipping.")
                         continue
-                    
+
                     # Compute synthetic logits using the global model
                     logit_syn = self.model(img_syn)
                     local_ukc = torch.mean(logit_syn, dim=0)
@@ -340,7 +395,7 @@ class Client:
                     mean_feature_syn = torch.mean(output_syn, dim=0)
 
                     # Retrieve real images DataLoader for class c
-                    real_loader = self.get_images_loader(c, max_batch_size=256)
+                    real_loader = self.get_images_loader(c)
                     if real_loader is not None:
                         try:
                             # Get the first (and only) batch
@@ -355,7 +410,7 @@ class Client:
                             logger.debug(f"Client {self.client_id}: Class {c} Distribution Matching Loss: {loss_feature.item():.4f}")
 
                             # Client Data Condensation Loss
-                            if self.global_Vc[c] is not None and self.global_Vc[c].numel() > 0:
+                            if self.global_Vc[c].numel() > 0:
                                 loss_logit = lambda_cdc * compute_swd(local_ukc, self.global_Vc[c])
                                 loss += loss_logit
                                 logger.debug(f"Client {self.client_id}: Class {c} Client Data Condensation Loss: {loss_logit.item():.4f}")
@@ -370,11 +425,27 @@ class Client:
                 loss.backward()
                 optimizer_img.step()
 
-                if it % 10 == 0 or it == self.args.Iteration:
+                if it % 10 == 0 or it == self.args.get('Iteration', 500):
                     logger.info(f"Client {self.client_id}: Iteration {it}, Loss: {loss.item():.4f}")
 
             # Save the final synthetic data
-            self.save_synthetic_data(r)
-            logger.info(f"Client {self.client_id}: Synthetic data training completed.")
+            self.save_synthetic_data(round_num)
+            logger.info(f"Client {self.client_id}: Synthetic data training completed for round {round_num}.")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error during synthetic data training - {e}")
+
+    def dynamic_lambda_cdc(self, iteration: int, total_iterations: int) -> float:
+        """
+        Dynamically adjusts lambda_cdc based on the current iteration.
+
+        Args:
+            iteration (int): Current iteration number.
+            total_iterations (int): Total number of iterations.
+
+        Returns:
+            float: Updated lambda_cdc value.
+        """
+        max_lambda = 1.0
+        min_lambda = 0.1
+        lambda_cdc = min_lambda + (max_lambda - min_lambda) * (iteration / total_iterations)
+        return lambda_cdc
