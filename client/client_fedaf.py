@@ -92,9 +92,30 @@ class Client:
         # Set normalization parameters based on dataset
         self.mean, self.std = self.set_normalization_parameters()
 
-    def has_no_data(self):
-        # Check for the presence of data (logits, labels, etc.)
-        return len(self.data) == 0  # Or a condition that applies to your case
+    def has_no_data(self) -> bool:
+        """
+        Checks if the client has no data at all or fewer than ipc real images for all classes.
+
+        Returns:
+            bool: True if the client should be skipped, False otherwise.
+        """
+        if not self.data_partition or len(self.data_partition) == 0:
+            return True
+
+        # Retrieve all labels in the client's data partition
+        all_labels = np.array(self.data_partition.dataset.targets)[self.data_partition.indices]
+        
+        # Check for each class if there are at least ipc images
+        classes_with_sufficient_data = 0
+        for c in range(self.num_classes):
+            class_count = np.sum(all_labels == c)
+            if class_count >= self.ipc:
+                classes_with_sufficient_data += 1
+
+        # If no class has sufficient data, skip the client
+        if classes_with_sufficient_data == 0:
+            return True
+        return False
 
     def set_normalization_parameters(self) -> tuple:
         """
@@ -214,7 +235,7 @@ class Client:
     def initialize_synthetic_data(self, round_num: int):
         """
         Initializes the synthetic dataset, optionally using real data for initialization.
-    
+
         Args:
             round_num (int): Current round number.
         """
@@ -222,7 +243,7 @@ class Client:
         try:
             # Load global aggregated logits for the current round
             self.global_Vc = self.load_global_aggregated_logits(round_num)
-    
+
             # Initialize synthetic images and labels
             self.image_syn = torch.randn(
                 size=(self.num_classes * self.ipc, self.channel, *self.im_size),
@@ -231,10 +252,10 @@ class Client:
                 device=self.device
             )
             self.label_syn = torch.arange(self.num_classes).repeat(self.ipc).to(self.device, dtype=torch.long)
-    
+
             initialized_classes = []
-    
-            if self.args.init == 'real':
+
+            if self.args['init'] == 'real':
                 logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
                 for c in range(self.num_classes):
                     real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
@@ -253,12 +274,12 @@ class Client:
                             logger.warning(f"Client {self.client_id}: No images retrieved for class {c} in DataLoader.")
                     else:
                         logger.warning(f"Client {self.client_id}: No real images for class {c}, skipping initialization.")
-    
+
             if not initialized_classes:
                 logger.info(f"Client {self.client_id}: No classes initialized with real data. Synthetic data remains randomly initialized.")
-    
+
             self.initialized_classes = initialized_classes
-    
+
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
             raise e
@@ -332,7 +353,7 @@ class Client:
                 f'res_{self.method}_{self.dataset}_{self.model_name}_Client{self.client_id}_{self.ipc}ipc_Round{r}.pt'
             )
             os.makedirs(os.path.dirname(savepath), exist_ok=True)
-    
+
             # Save only the classes that were properly initialized
             if self.initialized_classes:
                 filtered_images = []
@@ -342,16 +363,16 @@ class Client:
                     end_idx = (c + 1) * self.ipc
                     filtered_images.append(self.image_syn[start_idx:end_idx])
                     filtered_labels.append(self.label_syn[start_idx:end_idx])
-    
+
                 # Stack filtered images and labels into single tensors
                 filtered_images = torch.cat(filtered_images)
                 filtered_labels = torch.cat(filtered_labels)
-    
+
                 data_save = {
                     'images': filtered_images.detach().cpu(),
                     'labels': filtered_labels.detach().cpu()
                 }
-    
+
                 torch.save(data_save, savepath)
                 logger.info(f"Client {self.client_id}: Synthetic data saved to {savepath}.")
             else:
