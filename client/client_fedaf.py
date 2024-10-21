@@ -231,34 +231,34 @@ class Client:
 
             initialized_classes = []
 
-            if self.method.lower() in ['dm', 'real']:
-                logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
-                for c in range(self.num_classes):
-                    real_loader = self.get_images_loader(c, max_batch_size=min(self.ipc, 256))
-                    if real_loader is not None:
-                        try:
-                            images, _ = next(iter(real_loader))
-                            images = images.to(self.device)
-                            if images.size(0) >= self.ipc:
-                                selected_images = images[:self.ipc]
-                                initialized_classes.append(c)
-                                self.image_syn.data[c * self.ipc:(c + 1) * self.ipc] = selected_images.detach().data
-                                logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with real data.")
+            if self.args.init == 'real':
+                        logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
+                        for c in range(self.num_classes):
+                            real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
+                            if real_loader is not None:
+                                try:
+                                    images, _ = next(iter(real_loader))
+                                    images = images.to(self.device)
+                                    if images.size(0) >= self.ipc:
+                                        selected_images = images[:self.ipc]
+                                        initialized_classes.append(c)
+                                        self.image_syn.data[c * self.ipc:(c + 1) * self.ipc] = selected_images.detach().data
+                                        logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with real data.")
+                                    else:
+                                        logger.warning(f"Client {self.client_id}: Not enough images for class {c}. Required at least {self.ipc}, Available: {images.size(0)}. Skipping initialization.")
+                                except StopIteration:
+                                    logger.warning(f"Client {self.client_id}: No images retrieved for class {c} in DataLoader.")
                             else:
-                                logger.warning(f"Client {self.client_id}: Not enough images for class {c}. Required at least {self.ipc}, Available: {images.size(0)}. Skipping initialization.")
-                        except StopIteration:
-                            logger.warning(f"Client {self.client_id}: No images retrieved for class {c} in DataLoader.")
-                    else:
-                        logger.warning(f"Client {self.client_id}: No real images for class {c}, skipping initialization.")
-
-            if not initialized_classes:
-                logger.info(f"Client {self.client_id}: No classes initialized with real data. Synthetic data remains randomly initialized.")
-
-            self.initialized_classes = initialized_classes
-
-        except Exception as e:
-            logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
-            raise e
+                                logger.warning(f"Client {self.client_id}: No real images for class {c}, skipping initialization.")
+            
+                    if not initialized_classes:
+                        logger.info(f"Client {self.client_id}: No classes initialized with real data. Synthetic data remains randomly initialized.")
+            
+                    self.initialized_classes = initialized_classes
+            
+                except Exception as e:
+                    logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
+                    raise e
 
     def get_images_loader(self, class_label: int, max_batch_size: int = 256) -> DataLoader or None:
         """
@@ -320,22 +320,17 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error visualizing synthetic data - {e}")
 
-    def save_synthetic_data(self, round_num: int):
-        """
-        Saves the synthetic dataset to disk, excluding non-initialized classes.
-
-        Args:
-            round_num (int): Current round number.
-        """
-        logger.info(f"Client {self.client_id}: Saving synthetic data for round {round_num}.")
+    def save_synthetic_data(self, r):
+        logger.info(f"Client {self.client_id}: Saving synthetic data.")
         try:
             # Path to save synthetic data
             savepath = os.path.join(
                 self.synthetic_data_path,
-                f'res_{self.method}_{self.dataset}_{self.model_name}_Client{self.client_id}_{self.ipc}ipc_Round{round_num}.pt'
+                f'res_{self.method}_{self.dataset}_{self.model_name}_Client{self.client_id}_{self.ipc}ipc_Round{r}.pt'
             )
             os.makedirs(os.path.dirname(savepath), exist_ok=True)
-
+    
+            # Save only the classes that were properly initialized
             if self.initialized_classes:
                 filtered_images = []
                 filtered_labels = []
@@ -344,20 +339,20 @@ class Client:
                     end_idx = (c + 1) * self.ipc
                     filtered_images.append(self.image_syn[start_idx:end_idx])
                     filtered_labels.append(self.label_syn[start_idx:end_idx])
-
+    
                 # Stack filtered images and labels into single tensors
                 filtered_images = torch.cat(filtered_images)
                 filtered_labels = torch.cat(filtered_labels)
-
+    
                 data_save = {
                     'images': filtered_images.detach().cpu(),
                     'labels': filtered_labels.detach().cpu()
                 }
-
+    
                 torch.save(data_save, savepath)
                 logger.info(f"Client {self.client_id}: Synthetic data saved to {savepath}.")
             else:
-                logger.warning(f"Client {self.client_id}: No initialized classes to save. Skipping saving synthetic data.")
+                logger.warning(f"Client {self.client_id}: No initialized classes with enough real data. Skipping saving synthetic data.")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error saving synthetic data - {e}")
 
