@@ -223,13 +223,10 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     logger.info("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
-            '/home/t914a431/models',
-            f'{data}',
-            f'{model_name}',
-            f'{num_partitions}',
-            f'{str(hratio)}',
+            '/home/t914a431/logits',
             f'Client_{client_id}',
-            f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
+            f'Round_{round_num}',
+            f'Vkc_{c}.pt'
         )
 
         if os.path.exists(synthetic_data_filename):
