@@ -104,7 +104,8 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
             # Compute LGKM loss
             soft_labels = rc_smooth  # Aggregated soft labels from clients
             log_probs = nn.functional.log_softmax(outputs / temperature, dim=1)
-            loss_lgkm = criterion_lgkm(log_probs, soft_labels)
+            aggregated_log_probs = log_probs.mean(dim=0)
+            loss_lgkm = criterion_lgkm(aggregated_log_probs, soft_labels)
 
             # Combine the losses
             combined_loss = loss_ce + lambda_glob * loss_lgkm
@@ -327,8 +328,8 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
 
     # Compute T (class-wise averaged soft labels) from Rc
     logger.info("Server: Computing class-wise averaged soft labels T.")
-    rc_tensor_valid = torch.stack(Rc).to(device)  # Assuming Rc is a list of tensors
-    t_tensor = nn.functional.softmax(rc_tensor_valid / temperature, dim=1).mean(dim=0)
+    rc_tensor_valid = torch.stack(Rc).to(device)
+    r_tensor = rc_tensor_valid.mean(dim=0)
     logger.info("Server: Computed class-wise averaged soft labels T.")
 
     # Train the global model
@@ -336,7 +337,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     train_model(
         model=global_model,
         train_loader=train_loader,
-        rc_tensor=rc_tensor_valid,
+        rc_tensor=r_tensor,
         num_classes=num_classes,
         temperature=temperature,
         device=device,
