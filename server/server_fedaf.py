@@ -226,7 +226,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
             f'{data}',
             f'{model_name}',
             f'{num_partitions}',
-            f'{hratio}',
+            f'{str(hratio)}',
             f'Client_{client_id}',
             f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
