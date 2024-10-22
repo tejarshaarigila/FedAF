@@ -137,7 +137,7 @@ def evaluate_model(model, test_loader, device):
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
+            _, predicted  = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
@@ -222,7 +222,11 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     logger.info("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
-            '/home/t914a431/result',
+            '/home/t914a431/models',
+            f'{data}',
+            f'{model_name}',
+            f'{num_partitions}',
+            f'{hratio}',
             f'Client_{client_id}',
             f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
