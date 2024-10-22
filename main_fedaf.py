@@ -42,7 +42,7 @@ def parse_args():
                         help='Dataset to use: MNIST, CIFAR10')
     parser.add_argument('--model', type=str, default='ConvNet', choices=['ConvNet', 'ResNet18', 'MLP', 'LeNet', 'AlexNet', 'VGG11'],
                         help='Model architecture: ConvNet, ResNet18, MLP, LeNet, AlexNet, VGG11')
-    parser.add_argument('--rounds', type=int, default=50, help='Number of communication rounds')
+    parser.add_argument('--rounds', type=int, default=20, help='Number of communication rounds')
     parser.add_argument('--ipc', type=int, default=50, help='Instances per class')
     parser.add_argument('--global_steps', type=int, default=500, help='Global training steps')
     parser.add_argument('--num_partitions', type=int, default=10, help='Number of client partitions')
