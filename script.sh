@@ -2,7 +2,7 @@
 
 #SBATCH -p intel
 #SBATCH -N 1          # Number of nodes
-#SBATCH -n 2          # Number of tasks
+#SBATCH -n 1          # Number of tasks
 #SBATCH -c 10         # CPUs per task
 #SBATCH --mem=16G
 #SBATCH -t 30:00:00
@@ -44,34 +44,29 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     MODEL_BASE_DIR="/home/t914a431/models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
 
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 5 --mem=8G python3 $PYTHON_FILE_FEDAF \
+    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_FEDAF \
         --dataset $DATASET \
         --model $MODEL \
         --num_partitions $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
         --honesty_ratio $HONESTY_RATIO \
-        --save_path "$MODEL_BASE_DIR" &
-    pid_fedaf=$!
-
-    echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 5 --mem=8G python3 $PYTHON_FILE_FEDAVG \
-        --dataset $DATASET \
-        --model $MODEL \
-        --num_clients $NUM_USERS \
-        --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO &
-    pid_fedavg=$!
-
-    wait $pid_fedaf
+        --save_path "$MODEL_BASE_DIR"
+    
     status_fedaf=$?
-    wait $pid_fedavg
-    status_fedavg=$?
-
     if [ $status_fedaf -ne 0 ]; then
         echo "Error: FedAF script failed for NUM_USERS=${NUM_USERS}."
         exit 1
     fi
 
+    echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
+    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_FEDAVG \
+        --dataset $DATASET \
+        --model $MODEL \
+        --num_clients $NUM_USERS \
+        --alpha $ALPHA_DIRICHLET \
+        --honesty_ratio $HONESTY_RATIO
+    
+    status_fedavg=$?
     if [ $status_fedavg -ne 0 ]; then
         echo "Error: FedAvg script failed for NUM_USERS=${NUM_USERS}."
         exit 1
@@ -80,7 +75,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "FedAF and FedAvg scripts completed successfully for NUM_USERS=${NUM_USERS}."
 
     echo "Running Plot: $PYTHON_FILE_PLOT for ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_PLOT \
+    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_PLOT \
         --dataset $DATASET \
         --model $MODEL \
         --num_users $NUM_USERS \
