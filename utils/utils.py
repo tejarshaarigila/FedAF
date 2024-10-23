@@ -625,12 +625,11 @@ def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
                 pickle.dump(indices, f)
     logger.info(f"All data partitions saved in directory: {save_dir}")
 
-def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio):
+def load_partitions(num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio):
     """
     Load pre-partitioned data for each client for each round.
 
     Args:
-        dataset (torch.utils.data.Dataset): The original dataset.
         num_clients (int): Number of clients.
         num_rounds (int): Number of communication rounds.
         partition_dir (str): Directory where partitions are saved.
@@ -644,7 +643,7 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
     """
     client_datasets_per_round = {}
     # Construct the full path to the partitions
-    base_partition_path = os.path.join(partition_dir, dataset, model_name, str(num_clients), str(honesty_ratio))
+    base_partition_path = os.path.join(partition_dir, dataset_name, model_name, str(num_clients), str(honesty_ratio))
     
     for round_num in range(num_rounds):
         # Navigate to the round-specific directory
