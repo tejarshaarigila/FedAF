@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import torch.optim as optim
-from utils.utils_fedavg import get_network
+from utils.utils import get_network  # Updated import
 import logging
 import os
 
@@ -22,10 +22,10 @@ class Client:
         self.args = args
         self.device = args.device
         self.model = get_network(
-            args.model,
-            args.channel,
-            args.num_classes,
-            args.im_size,
+            model_name=args.model,
+            channel=args.channel,
+            num_classes=args.num_classes,
+            im_size=args.im_size,
             device=self.device
         )
         self.train_loader = DataLoader(
@@ -105,4 +105,3 @@ class Client:
 
         self.logger.info("Client %d: Local training completed.", self.client_id)
         return self.model.state_dict()
-        
