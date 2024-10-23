@@ -522,7 +522,7 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 
-def load_data(dataset_name, data_path='data'):
+def load_data(dataset_name, data_path='data', train=True):
     """Load the dataset and apply necessary transformations."""
     logger.info("Loading dataset: %s", dataset_name)
     if dataset_name == 'CIFAR10':
