@@ -3,15 +3,15 @@
 #SBATCH -p intel
 #SBATCH -N 1          # Number of nodes
 #SBATCH -n 1          # Number of tasks
-#SBATCH -c 10         # CPUs per task
+#SBATCH -c 20         # CPUs per task, depending on clients and workload (2 CPUs per client for 10 clients)
 #SBATCH --mem=32G     
 #SBATCH -t 48:00:00   
 #SBATCH -J federated_exp
 #SBATCH -o slurm-%j.out
 
 # Export environment variables for thread management
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1  # Limit OpenMP to 1 thread per client
+export MKL_NUM_THREADS=1  # Limit MKL to 1 thread per client
 
 # Define Python scripts
 PYTHON_FILE_PARTITION="utils/generate_partitions.py"
@@ -71,7 +71,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run generate_partitions.py
     echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_PARTITION \
+    python3 $PYTHON_FILE_PARTITION \
         --dataset $DATASET \
         --num_clients $NUM_USERS \
         --num_rounds 20 \
@@ -93,7 +93,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run FedAvg
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_FEDAVG \
+    python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
@@ -116,7 +116,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run FedAF
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_FEDAF \
+    python3 $PYTHON_FILE_FEDAF \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
@@ -137,7 +137,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run main_plot.py
     echo "Running Plot: $PYTHON_FILE_PLOT for ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_PLOT \
+    python3 $PYTHON_FILE_PLOT \
         --dataset $DATASET \
         --model $MODEL \
         --num_users $NUM_USERS \
