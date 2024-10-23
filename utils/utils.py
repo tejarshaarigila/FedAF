@@ -13,11 +13,6 @@ import logging
 import time
 
 # networks
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 ''' Swish activation '''
 class Swish(nn.Module): # Swish(x) = x∗σ(x)
     def __init__(self):
@@ -550,24 +545,25 @@ def load_data(dataset_name, data_path='data', train=True):
     logger.info("Dataset loaded successfully.")
     return dataset
 
-def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
+def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=42):
     """
-    Partition dataset into unique, non-overlapping subsets for each client and each round,
-    considering the total number of rounds and allowing for missing data for some clients.
-
+    Partition the dataset into unique, non-overlapping subsets for each client across all rounds,
+    ensuring no data is reused in subsequent rounds.
+    
     Args:
         dataset (torch.utils.data.Dataset): The dataset to partition.
         num_clients (int): Number of clients.
         num_rounds (int): Number of communication rounds.
         alpha (float): Dirichlet distribution parameter for data heterogeneity.
         seed (int): Random seed for reproducibility.
-
+    
     Returns:
         dict: A dictionary with keys as round numbers and values as lists of client indices.
     """
+    logger = logging.getLogger('FedAF.Utils')
     np.random.seed(seed)
     torch.manual_seed(seed)
-    logger.info("Starting dataset partitioning per round with Dirichlet distribution.")
+    logger.info("Starting dataset partitioning across all rounds and clients with Dirichlet distribution.")
 
     # Extract labels and create indices for each class
     labels = np.array(dataset.targets)
@@ -578,36 +574,44 @@ def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
     for c in range(num_classes):
         np.random.shuffle(label_indices[c])
 
+    # Calculate total number of allocations
+    total_allocations = num_rounds * num_clients
+
+    # Initialize client_indices_per_round
     client_indices_per_round = {round_num: [[] for _ in range(num_clients)] for round_num in range(num_rounds)}
 
-    for round_num in range(num_rounds):
-        logger.info(f"Partitioning data for Round {round_num + 1}/{num_rounds}")
-        for c in range(num_classes):
-            available_indices = label_indices[c]
+    for c in range(num_classes):
+        available_indices = label_indices[c]
+        total_samples = len(available_indices)
+        if total_samples < total_allocations:
+            logger.warning(f"Not enough data for class {c}. Needed: {total_allocations}, Available: {total_samples}")
+            # Optionally, you can decide to allow some reuse or handle this differently
+            # For now, we'll proceed by allocating as much as possible
+            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
+            allocations = allocations.astype(int)
+            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
+        else:
+            # Allocate without exceeding available samples
+            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
+            allocations = allocations.astype(int)
+            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
 
-            if len(available_indices) == 0:
-                logger.warning(f"No more data for class {c} in round {round_num + 1}. Skipping this class for this round.")
-                continue
+        # Assign allocations to each round and client
+        start = 0
+        for round_num in range(num_rounds):
+            for client_id in range(num_clients):
+                num_samples = allocations[round_num * num_clients + client_id]
+                end = start + num_samples
+                if end > total_samples:
+                    end = total_samples
+                client_indices_per_round[round_num][client_id].extend(available_indices[start:end])
+                start = end
+                if start >= total_samples:
+                    break
+            if start >= total_samples:
+                break
 
-            # Distribute class data using Dirichlet distribution across clients
-            proportions = np.random.dirichlet([alpha] * num_clients)
-            proportions = proportions / proportions.sum()  # Normalize proportions to ensure sum is 1
-
-            # Calculate the number of samples for each client based on Dirichlet proportions
-            samples_per_client = (proportions * len(available_indices)).astype(int)
-
-            # Adjust to ensure total samples match available data for the class
-            samples_per_client[-1] = len(available_indices) - samples_per_client[:-1].sum()
-
-            # Split indices for this class based on the calculated sample proportions
-            split_indices = np.split(available_indices, np.cumsum(samples_per_client)[:-1])
-
-            for client_id, indices in enumerate(split_indices):
-                if len(indices) == 0:
-                    logger.info(f"Client {client_id} received no data for class {c} in round {round_num + 1}.")
-                client_indices_per_round[round_num][client_id].extend(indices.tolist())
-
-    logger.info("Dataset partitioning completed successfully.")
+    logger.info("Dataset partitioning across all rounds and clients completed successfully.")
     return client_indices_per_round
 
 def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
