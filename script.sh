@@ -62,50 +62,64 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     mkdir -p "$MODEL_BASE_DIR"
     mkdir -p "$PARTITION_DIR"
 
-    echo "----------------------------------------"
-    echo "Step 1: Generating Data Partitions"
-    echo "----------------------------------------"
+    # Step 1: Generating Data Partitions
+    if [ $NUM_USERS -eq 5 ] && [ -d "$PARTITION_DIR/round_0" ]; then
+        echo "----------------------------------------"
+        echo "Skipping Step 1: Data partitions already exist for NUM_USERS=${NUM_USERS}"
+        echo "----------------------------------------"
+    else
+        echo "----------------------------------------"
+        echo "Step 1: Generating Data Partitions"
+        echo "----------------------------------------"
 
-    # Run generate_partitions.py
-    echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 python3 $PYTHON_FILE_PARTITION \
-        --dataset $DATASET \
-        --num_clients $NUM_USERS \
-        --num_rounds 20 \
-        --alpha $ALPHA_DIRICHLET \
-        --data_path "/home/t914a431/data" \
-        --save_dir "$PARTITION_DIR" \
-        --seed 42
+        # Run generate_partitions.py
+        echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
+        srun -n 1 -c 10 python3 $PYTHON_FILE_PARTITION \
+            --dataset $DATASET \
+            --num_clients $NUM_USERS \
+            --num_rounds 20 \
+            --alpha $ALPHA_DIRICHLET \
+            --data_path "/home/t914a431/data" \
+            --save_dir "$PARTITION_DIR" \
+            --seed 42
 
-    status_partition=$?
-    if [ $status_partition -ne 0 ]; then
-        echo "Error: Partition generation failed for NUM_USERS=${NUM_USERS}."
-        exit 1
+        status_partition=$?
+        if [ $status_partition -ne 0 ]; then
+            echo "Error: Partition generation failed for NUM_USERS=${NUM_USERS}."
+            exit 1
+        fi
+        echo "Partition generation completed successfully for NUM_USERS=${NUM_USERS}."
     fi
-    echo "Partition generation completed successfully for NUM_USERS=${NUM_USERS}."
 
-    echo "----------------------------------------"
-    echo "Step 2: Running FedAvg"
-    echo "----------------------------------------"
+    # Step 2: Running FedAvg
+    if [ $NUM_USERS -eq 5 ] && [ -f "$MODEL_BASE_DIR/fedavg_global_model_19.pth" ]; then
+        echo "----------------------------------------"
+        echo "Skipping Step 2: FedAvg already completed for NUM_USERS=${NUM_USERS}"
+        echo "----------------------------------------"
+    else
+        echo "----------------------------------------"
+        echo "Step 2: Running FedAvg"
+        echo "----------------------------------------"
 
-    # Run FedAvg
-    echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG \
-        --dataset $DATASET \
-        --model $MODEL \
-        --num_clients $NUM_USERS \
-        --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO \
-        --partition_dir "$PARTITION_DIR" \
-        --save_dir "$MODEL_BASE_DIR" \
-        --log_dir "/home/t914a431/log/"
+        # Run FedAvg
+        echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
+        srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG \
+            --dataset $DATASET \
+            --model $MODEL \
+            --num_clients $NUM_USERS \
+            --alpha $ALPHA_DIRICHLET \
+            --honesty_ratio $HONESTY_RATIO \
+            --partition_dir "$PARTITION_DIR" \
+            --save_dir "$MODEL_BASE_DIR" \
+            --log_dir "/home/t914a431/log/"
 
-    status_fedavg=$?
-    if [ $status_fedavg -ne 0 ]; then
-        echo "Error: FedAvg script failed for NUM_USERS=${NUM_USERS}."
-        exit 1
+        status_fedavg=$?
+        if [ $status_fedavg -ne 0 ]; then
+            echo "Error: FedAvg script failed for NUM_USERS=${NUM_USERS}."
+            exit 1
+        fi
+        echo "FedAvg script completed successfully for NUM_USERS=${NUM_USERS}."
     fi
-    echo "FedAvg script completed successfully for NUM_USERS=${NUM_USERS}."
 
     echo "----------------------------------------"
     echo "Step 3: Running FedAF"
@@ -119,7 +133,9 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --num_clients $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
         --honesty_ratio $HONESTY_RATIO \
-        --partition_dir "$PARTITION_DIR"
+        --partition_dir "$PARTITION_DIR" \
+        --save_dir "$MODEL_BASE_DIR" \
+        --log_dir "/home/t914a431/log/"
 
     status_fedaf=$?
     if [ $status_fedaf -ne 0 ]; then
