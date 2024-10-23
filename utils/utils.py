@@ -559,7 +559,7 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
     Returns:
         dict: A dictionary with keys as round numbers and values as lists of client indices.
     """
-    logger = logging.getLogger('FedAF.Utils')
+    logger = logging.getLogger('Common.Utils')
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info("Starting dataset partitioning across all rounds and clients with Dirichlet distribution.")
