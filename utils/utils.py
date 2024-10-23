@@ -11,7 +11,7 @@ from torchvision import datasets, transforms
 from scipy.stats import wasserstein_distance
 import logging
 import time
-from utils.networks import (
+from networks import (
     MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11BN,
     ResNet18, ResNet18BN_AP, ResNet18BN
 )
