@@ -61,25 +61,22 @@ class Server:
     def aggregate(self, client_models, client_sizes):
         """
         Aggregates client models into the global model using weighted averaging.
-
-        Args:
-            client_models (list): List of client model state dictionaries.
-            client_sizes (list): List of dataset sizes for each client.
+        Ensures all client models are on the same device as the server.
         """
         self.logger.info("Server: Starting aggregation of client models.")
         total_size = sum(client_sizes)
         self.logger.info(f"Server: Total data size across all clients: {total_size}")
-
+    
         # Initialize the aggregated state dictionary
-        aggregated_state_dict = {key: torch.zeros_like(val) for key, val in self.model.state_dict().items()}
-
+        aggregated_state_dict = {key: torch.zeros_like(val, device=self.device) for key, val in self.model.state_dict().items()}
+    
         # Weighted aggregation
         for idx, (client_state, client_size) in enumerate(zip(client_models, client_sizes)):
             weight = client_size / total_size
             for key in aggregated_state_dict:
-                aggregated_state_dict[key] += client_state[key] * weight
+                aggregated_state_dict[key] += client_state[key].to(self.device) * weight
             self.logger.debug(f"Server: Aggregated weights from client {idx} with size {client_size}.")
-
+    
         # Update the global model
         self.model.load_state_dict(aggregated_state_dict)
         self.logger.info("Server: Global model updated with aggregated client models.")
