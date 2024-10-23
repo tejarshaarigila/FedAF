@@ -80,6 +80,10 @@ class Client:
         Returns:
             dict: State dictionary of the trained model.
         """
+        if len(self.train_loader.dataset) == 0:
+            self.logger.info(f"Client {self.client_id}: No data to train on. Skipping.")
+            return None
+            
         self.logger.info("Client %d: Starting local training.", self.client_id)
         self.model.train()
         for epoch in range(1, self.args.local_epochs + 1):
