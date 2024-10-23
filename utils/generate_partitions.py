@@ -79,6 +79,4 @@ def main():
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
 
 if __name__ == "__main__":
-    # Set the start method for multiprocessing
-    mp.set_start_method('spawn', force=True)
     main()
