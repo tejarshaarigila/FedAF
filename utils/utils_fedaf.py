@@ -15,6 +15,10 @@ from utils.networks import (
     VGG11BN, ResNet18, ResNet18BN_AP, ResNet18BN
 )
 
+log_directory = "/home/t914a431/log"
+if not os.path.exists(log_directory):
+    os.makedirs(log_directory)
+
 # Configure logging for utilities
 logger = logging.getLogger('FedAF.Utils')
 if not logger.handlers:
