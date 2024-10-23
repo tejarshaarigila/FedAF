@@ -59,10 +59,9 @@ def load_data(dataset_name, data_path='data'):
     logger.info("Dataset loaded successfully.")
     return dataset
 
-
 def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
     """
-    Partition dataset into unique, non-overlapping subsets for each client and each round.
+    Partition dataset into subsets for each client and each round using Dirichlet distribution.
 
     Args:
         dataset (torch.utils.data.Dataset): The dataset to partition.
@@ -76,23 +75,16 @@ def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
     """
     np.random.seed(seed)
     torch.manual_seed(seed)
-    logger.info("Starting dataset partitioning per round.")
+    logger.info("Starting dataset partitioning per round with Dirichlet distribution.")
 
+    # Extract labels and create indices for each class
     labels = np.array(dataset.targets)
     num_classes = np.max(labels) + 1
     label_indices = [np.where(labels == i)[0].tolist() for i in range(num_classes)]
 
-    # Shuffle indices for each class
+    # Shuffle the indices for each class
     for c in range(num_classes):
         np.random.shuffle(label_indices[c])
-
-    # Calculate total samples needed
-    samples_per_client_per_round = len(dataset) // (num_clients * num_rounds)
-    total_required = samples_per_client_per_round * num_clients * num_rounds
-
-    if total_required > len(dataset):
-        logger.error("Not enough data to partition without overlap. Reduce num_clients, num_rounds, or adjust dataset size.")
-        raise ValueError("Not enough data to partition without overlap.")
 
     client_indices_per_round = {round_num: [[] for _ in range(num_clients)] for round_num in range(num_rounds)}
 
@@ -100,29 +92,32 @@ def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
         logger.info(f"Partitioning data for Round {round_num + 1}/{num_rounds}")
         for c in range(num_classes):
             available_indices = label_indices[c]
-            if len(available_indices) < samples_per_client_per_round:
-                logger.error(f"Not enough data for class {c} in round {round_num + 1}.")
-                raise ValueError(f"Not enough data for class {c} in round {round_num + 1}.")
 
-            # Select samples for this round and class
-            selected_indices = available_indices[:samples_per_client_per_round]
-            label_indices[c] = available_indices[samples_per_client_per_round:]
+            if len(available_indices) == 0:
+                logger.warning(f"No more data for class {c} in round {round_num + 1}. Skipping this class for this round.")
+                continue
 
-            # Distribute to clients using Dirichlet distribution
-            proportions = np.random.dirichlet(alpha * np.ones(num_clients))
-            proportions = proportions / proportions.sum()
+            # Distribute class data using Dirichlet distribution across clients
+            proportions = np.random.dirichlet([alpha] * num_clients)
+            proportions = proportions / proportions.sum()  # Normalize proportions to ensure sum is 1
 
-            splits = (proportions * samples_per_client_per_round).astype(int)
-            splits[-1] = samples_per_client_per_round - splits[:-1].sum()  # Adjust last split
+            # Calculate the number of samples for each client based on Dirichlet proportions
+            samples_per_client = (proportions * len(available_indices)).astype(int)
 
-            split_indices = np.split(selected_indices, np.cumsum(splits)[:-1])
+            # Adjust to ensure total samples match available data for the class
+            samples_per_client[-1] = len(available_indices) - samples_per_client[:-1].sum()
+
+            # Split indices for this class based on the calculated sample proportions
+            split_indices = np.split(available_indices, np.cumsum(samples_per_client)[:-1])
 
             for client_id, indices in enumerate(split_indices):
                 client_indices_per_round[round_num][client_id].extend(indices.tolist())
 
+            # Update remaining available indices for this class
+            label_indices[c] = available_indices[len(available_indices):]
+
     logger.info("Dataset partitioning completed successfully.")
     return client_indices_per_round
-
 
 def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
     """Save partitions for each client for each round."""
