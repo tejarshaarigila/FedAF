@@ -5,7 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, TensorDataset
-from utils.utils_fedaf import get_network, load_latest_model
+from utils.utils import get_network
 import numpy as np
 from multiprocessing import Pool, set_start_method
 import logging
@@ -14,7 +14,7 @@ import argparse
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s',
     filename='/home/t914a431/log/plotting.log',
     filemode='w'
 )
@@ -212,9 +212,12 @@ def test_saved_models(args):
         f"{args.dataset}_{args.model}_C{args.num_users}_alpha{args.alpha_dirichlet}.png"
     )
     plt.savefig(plot_save_path)
-    plt.show()
+    plt.close()  # Close the plot to free memory
     logger.info(f"Plot saved to {plot_save_path}")
 
-if __name__ == "__main__":
+def main():
     args = PlotArgs()
     test_saved_models(args)
+
+if __name__ == "__main__":
+    main()
