@@ -9,9 +9,8 @@ import argparse
 import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils_fedaf import load_data, get_network, get_dataset
-from utils.plot_utils import plot_accuracies
-from multiprocessing import Pool
+from utils.utils import load_data, partition_data_per_round, load_partitions, get_network, plot_accuracies
+from torch.utils.data import Subset
 
 def setup_main_logger(log_dir):
     """
@@ -38,14 +37,14 @@ def setup_main_logger(log_dir):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Aggregation-Free Federated Learning with Client Data Condensation (FedAF)")
-    parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'MNIST'],
-                        help='Dataset to use: MNIST, CIFAR10')
+    parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'MNIST', 'CelebA'],
+                        help='Dataset to use: MNIST, CIFAR10, CelebA')
     parser.add_argument('--model', type=str, default='ConvNet', choices=['ConvNet', 'ResNet18', 'MLP', 'LeNet', 'AlexNet', 'VGG11'],
                         help='Model architecture: ConvNet, ResNet18, MLP, LeNet, AlexNet, VGG11')
     parser.add_argument('--rounds', type=int, default=20, help='Number of communication rounds')
     parser.add_argument('--ipc', type=int, default=50, help='Instances per class')
     parser.add_argument('--global_steps', type=int, default=500, help='Global training steps')
-    parser.add_argument('--num_partitions', type=int, default=10, help='Number of client partitions')
+    parser.add_argument('--num_clients', type=int, default=10, help='Number of clients')
     parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for non-IID data')
     parser.add_argument('--honesty_ratio', type=int, default=1, help='Ratio of honest clients (0 to 1)')
     parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda'], help='Device to use: cpu or cuda')
@@ -77,6 +76,8 @@ def parse_args():
                         help='Directory to save plots.')
     parser.add_argument('--log_dir', type=str, default='/home/t914a431/log/',
                         help='Directory to save logs.')
+    parser.add_argument('--partition_dir', type=str, default='/home/t914a431/partitions_per_round',
+                        help='Directory where data partitions per round are saved.')
 
     args = parser.parse_args()
     return args
@@ -86,17 +87,13 @@ def initialize_global_model(args, logger):
     Initializes a random global model and saves it so that clients can access it.
     """
     model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
-    model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_partitions), str(args.honesty_ratio))
+    model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio))
     os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
     logger.info(f"Global model initialized and saved to {model_path}.")
     time.sleep(2)
 
-def train_client(client):
-    """Helper function to train a client."""
-    return client.train()
-    
 def calculate_and_save_logits_worker(args_tuple):
     """
     Worker function for calculating and saving logits.
@@ -123,131 +120,14 @@ def calculate_and_save_logits_worker(args_tuple):
         logger = logging.getLogger('FedAF.Main')
         logger.exception(f"Exception in client {client_id} during logits calculation: {e}")
         return None
-        
-def simulate():
-    # Define the log directory
-    args = parse_args()
-    logger = setup_main_logger(args.log_dir)
-    logger.info("FedAF Main Logger Initialized.")
-
-    # Get dataset-specific configurations
-    channel, im_size, num_classes, class_names, mean, std, client_datasets, dst_test, test_loader = get_dataset(
-        dataset=args.dataset,
-        data_path='/home/t914a431/data',
-        num_partitions=args.num_partitions,
-        alpha=args.alpha
-    )
-    args.im_size = im_size
-    args.channel = channel
-    args.num_classes = num_classes
-    args.mean = mean
-    args.std = std
-
-    logger.info("Dataset loaded and distributed to clients.")
-
-    # Create necessary directories
-    model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_partitions), str(args.honesty_ratio))
-    os.makedirs(model_dir, exist_ok=True)
-    os.makedirs(args.save_path, exist_ok=True)
-    os.makedirs(args.logits_dir, exist_ok=True)
-    os.makedirs(args.save_image_dir, exist_ok=True)
-    os.makedirs(args.plots_dir, exist_ok=True)
-
-    # Initialize the global model and save it if it's the first round
-    global_model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
-    if not os.path.exists(global_model_path):
-        logger.info("[+] Initializing Global Model")
-        initialize_global_model(args, logger)
-
-    args_dict = vars(args)  # Convert args Namespace to a dictionary
-
-    # Initialize list to store test accuracies
-    test_accuracies = []
-
-    # Main communication rounds
-    for r in range(1, args.rounds + 1):
-        logger.info(f"---  Round: {r}/{args.rounds}  ---")
-
-        # Step 1: Clients calculate and save their class-wise logits
-        client_args = [
-            (client_id, client_datasets[client_id], args_dict, r)
-            for client_id in range(len(client_datasets))
-        ]
-        
-        with multiprocessing.Pool(processes=args.num_partitions) as pool:
-            logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
-
-        logger.info("Clients have completed calculating and saving logits.")
-
-        # Step 2: Aggregate logits from available clients
-        valid_logit_paths = [path for path in logit_paths if path is not None]
-        if not valid_logit_paths:
-            logger.error(f"No valid logits were calculated by any client in round {r}. Skipping round.")
-            logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
-            continue  # Skip the rest of the round if no logits are available
-
-        aggregated_logits = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
-        save_aggregated_logits(aggregated_logits, args, r, 'V', logger)
-
-        # Step 3: Clients perform Data Condensation on synthetic data S
-        with multiprocessing.Pool(processes=args.num_partitions) as pool:
-            condensation_status = pool.map(data_condensation_worker, client_args)
-
-        # Step 4: Identify clients that succeeded in data condensation
-        successful_clients = [client_id for client_id, status in zip(range(len(client_datasets)), condensation_status) if status]
-        if not successful_clients:
-            logger.error(f"No clients succeeded in data condensation in round {r}. Skipping server update.")
-            logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
-            continue  # Skip the server update if no clients succeeded
-
-        # Prepare logit paths for successful clients
-        successful_logit_paths = [logit_paths[client_id] for client_id in successful_clients]
-
-        # Step 5: Aggregate logits for labels ('R') from successful clients
-        aggregated_labels = aggregate_logits(successful_logit_paths, args.num_classes, 'R', device=args.device)
-        save_aggregated_logits(aggregated_labels, args, r, 'R', logger)
-
-        # Step 6: Server updates the global model using aggregated soft labels R & synthetic data S
-        server_accuracy = server_update(
-            model_name=args.model,
-            data=args.dataset,
-            num_partitions=args.num_partitions,
-            round_num=r,
-            ipc=args.ipc,
-            method=args.method,
-            hratio=args.honesty_ratio,
-            temperature=args.temperature,
-            num_epochs=args.global_steps,
-            lambda_cdc=args.lambda_cdc,
-            lambda_glob=args.lambda_glob,
-            device=args.device,
-            logger=logger
-        )
-
-        # Collect test accuracy
-        test_accuracies.append(server_accuracy)
-
-        logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
-
-    # Plot and save test accuracy graph after all rounds
-    plot_accuracies(
-        test_accuracies=test_accuracies,  # Collected accuracies during server_update
-        model_name=args.model,
-        dataset=args.dataset,
-        alpha=args.alpha,
-        num_partitions=args.num_partitions,
-        save_dir=args.plots_dir
-    )
-
-    logger.info("Federated Aggregation-Free Learning completed. Test accuracy graph saved.")
 
 def data_condensation_worker(args_tuple):
     """
     Worker function for data condensation.
-    
+
     Args:
         args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
-    
+
     Returns:
         bool: True if data condensation succeeds, False otherwise.
     """
@@ -281,13 +161,13 @@ def data_condensation_worker(args_tuple):
 def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
     """
     Aggregates class-wise logits from all clients using their logit directories.
-    
+
     Args:
         logit_dirs (list): List of logit directory paths from clients.
         num_classes (int): Number of classes.
         v_r (str): Indicator for the type of logits ('V' or 'R').
         device (str): Device to use for tensor operations ('cpu' or 'cuda').
-    
+
     Returns:
         list: Aggregated logits per class.
     """
@@ -333,7 +213,7 @@ def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str =
 def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str, logger):
     """
     Saves the aggregated logits to a global directory accessible by all clients.
-    
+
     Args:
         aggregated_logits (list): Aggregated logits per class.
         args (Namespace): Parsed arguments.
@@ -349,6 +229,128 @@ def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: s
         logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
     except Exception as e:
         logger.error(f"Server: Error saving aggregated logits to {global_logits_path} - {e}")
+
+def simulate():
+    # Define the log directory
+    args = parse_args()
+    logger = setup_main_logger(args.log_dir)
+    logger.info("FedAF Main Logger Initialized.")
+
+    # Load the dataset
+    base_dataset = load_data(args.dataset, data_path='/home/t914a431/data')
+
+    # Generate and save partitions if they don't already exist
+    if not os.path.exists(args.partition_dir):
+        logger.info("No existing partitions found. Generating new partitions.")
+        client_indices_per_round = partition_data_per_round(
+            dataset=base_dataset,
+            num_clients=args.num_clients,
+            num_rounds=args.rounds,
+            alpha=args.alpha,
+            seed=42
+        )
+        save_partitions(client_indices_per_round, save_dir=args.partition_dir)
+    else:
+        logger.info("Partitions directory found. Loading existing partitions.")
+
+    # Load partitions
+    client_datasets_per_round = load_partitions(
+        dataset=base_dataset,
+        num_clients=args.num_clients,
+        num_rounds=args.rounds,
+        partition_dir=args.partition_dir
+    )
+
+    # Initialize the global model and save it if it's the first round
+    model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio))
+    global_model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
+    if not os.path.exists(global_model_path):
+        logger.info("[+] Initializing Global Model")
+        initialize_global_model(args, logger)
+
+    # Initialize list to store test accuracies
+    test_accuracies = []
+
+    # Main communication rounds
+    for r in range(1, args.rounds + 1):
+        logger.info(f"---  Round: {r}/{args.rounds}  ---")
+
+        # Load partitioned data for each client for the current round
+        current_round = r - 1  # Zero-based indexing
+        client_datasets = client_datasets_per_round[current_round]
+
+        # Step 1: Clients calculate and save their class-wise logits
+        client_args = [
+            (client_id, client_datasets[client_id], vars(args), r)
+            for client_id in range(args.num_clients)
+        ]
+
+        with multiprocessing.Pool(processes=args.num_clients) as pool:
+            logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
+
+        logger.info("Clients have completed calculating and saving logits.")
+
+        # Step 2: Aggregate logits from available clients
+        valid_logit_paths = [path for path in logit_paths if path is not None]
+        if not valid_logit_paths:
+            logger.error(f"No valid logits were calculated by any client in round {r}. Skipping round.")
+            logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
+            continue  # Skip the rest of the round if no logits are available
+
+        aggregated_logits = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
+        save_aggregated_logits(aggregated_logits, args, r, 'V', logger)
+
+        # Step 3: Clients perform Data Condensation on synthetic data S
+        with multiprocessing.Pool(processes=args.num_clients) as pool:
+            condensation_status = pool.map(data_condensation_worker, client_args)
+
+        # Step 4: Identify clients that succeeded in data condensation
+        successful_clients = [client_id for client_id, status in zip(range(args.num_clients), condensation_status) if status]
+        if not successful_clients:
+            logger.error(f"No clients succeeded in data condensation in round {r}. Skipping server update.")
+            logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
+            continue  # Skip the server update if no clients succeeded
+
+        # Prepare logit paths for successful clients
+        successful_logit_paths = [logit_paths[client_id] for client_id in successful_clients]
+
+        # Step 5: Aggregate logits for labels ('R') from successful clients
+        aggregated_labels = aggregate_logits(successful_logit_paths, args.num_classes, 'R', device=args.device)
+        save_aggregated_logits(aggregated_labels, args, r, 'R', logger)
+
+        # Step 6: Server updates the global model using aggregated soft labels R & synthetic data S
+        server_accuracy = server_update(
+            model_name=args.model,
+            data=args.dataset,
+            num_clients=args.num_clients,
+            round_num=r,
+            ipc=args.ipc,
+            method=args.method,
+            hratio=args.honesty_ratio,
+            temperature=args.temperature,
+            num_epochs=args.global_steps,
+            lambda_cdc=args.lambda_cdc,
+            lambda_glob=args.lambda_glob,
+            device=args.device,
+            logger=logger
+        )
+
+        # Collect test accuracy
+        test_accuracies.append(server_accuracy)
+
+        logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
+
+    # Plot and save test accuracy graph after all rounds
+    plot_accuracies(
+        test_accuracies=test_accuracies,  # Collected accuracies during server_update
+        model_name=args.model,
+        dataset=args.dataset,
+        alpha=args.alpha,
+        num_partitions=args.num_clients,
+        save_dir=args.plots_dir
+    )
+
+    logger.info("Federated Aggregation-Free Learning completed. Test accuracy graph saved.")
 
 if __name__ == '__main__':
     simulate()
