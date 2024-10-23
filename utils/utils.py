@@ -516,7 +516,6 @@ if not logger.handlers:
     logger.addHandler(console_handler)
     logger.setLevel(logging.INFO)
 
-
 def load_data(dataset_name, data_path='data', train=True):
     """Load the dataset and apply necessary transformations."""
     logger.info("Loading dataset: %s", dataset_name)
@@ -698,7 +697,6 @@ def get_network(model_name, channel, num_classes, im_size=(32, 32), device='cpu'
     net = net.to(device)
     logger.info(f"Initialized model '{model_name}' on device '{device}'.")
     return net
-
 
 def get_default_convnet_setting():
     """Provides default settings for the ConvNet architecture."""
