@@ -625,8 +625,7 @@ def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
                 pickle.dump(indices, f)
     logger.info(f"All data partitions saved in directory: {save_dir}")
 
-
-def load_partitions(dataset, num_clients, num_rounds, partition_dir='partitions_per_round'):
+def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio='1.0'):
     """
     Load pre-partitioned data for each client for each round.
 
@@ -635,18 +634,28 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir='partitions_
         num_clients (int): Number of clients.
         num_rounds (int): Number of communication rounds.
         partition_dir (str): Directory where partitions are saved.
+        dataset_name (str): Name of the dataset (e.g., CIFAR10, MNIST).
+        model_name (str): Model used for the partitioning (e.g., ConvNet, ResNet).
+        honesty_ratio (str): Honesty ratio, as part of the directory structure.
 
     Returns:
         dict: A dictionary with keys as round numbers and values as lists of Subset datasets for each client.
               If a partition is missing, the client will have no data for that round.
     """
     client_datasets_per_round = {}
+    # Construct the full path to the partitions
+    base_partition_path = os.path.join(partition_dir, dataset_name, model_name, str(num_clients), str(honesty_ratio))
+    
     for round_num in range(num_rounds):
-        round_dir = os.path.join(partition_dir, f'round_{round_num}')
+        # Navigate to the round-specific directory
+        round_dir = os.path.join(base_partition_path, f'round_{round_num}')
         client_datasets = []
         for client_id in range(num_clients):
             partition_path = os.path.join(round_dir, f'client_{client_id}_partition.pkl')
             
+            # Log the exact path being checked
+            logger.info(f"Checking partition path: {partition_path}")
+
             # Check if the partition file exists
             if os.path.exists(partition_path):
                 # Load the partition if it exists
