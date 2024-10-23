@@ -196,13 +196,25 @@ def main():
 
         # Distribute the latest global model to clients
         global_model = server.get_global_model_state()
-        for client in clients:
-            client.set_model(global_model)
-        logger.info("Global model distributed to clients.")
-
+        
+        # Move the global model state dictionary to CPU for serialization
+        global_model_cpu = {key: value.cpu() for key, value in global_model.items()}
+        
         # Clients perform local training in parallel using multiprocessing.Pool
         with multiprocessing.Pool(processes=args.num_clients) as pool:
-            client_models = pool.starmap(train_client, [(client.client_id, client.train_data, global_model, args, client_id in honest_clients) for client_id, client in enumerate(clients)])
+            client_models = pool.starmap(
+                train_client,
+                [
+                    (
+                        client.client_id,
+                        client.train_data,
+                        global_model_cpu,
+                        args,
+                        client_id in honest_clients
+                    )
+                    for client_id, client in enumerate(clients)
+                ]
+            )
 
         logger.info("Clients have completed local training.")
 
