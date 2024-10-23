@@ -144,6 +144,7 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir='partitions_
 
     Returns:
         dict: A dictionary with keys as round numbers and values as lists of Subset datasets for each client.
+              If a partition is missing, the client will have no data for that round.
     """
     client_datasets_per_round = {}
     for round_num in range(num_rounds):
@@ -151,14 +152,23 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir='partitions_
         client_datasets = []
         for client_id in range(num_clients):
             partition_path = os.path.join(round_dir, f'client_{client_id}_partition.pkl')
-            with open(partition_path, 'rb') as f:
-                indices = pickle.load(f)
-            client_subset = Subset(dataset, indices)
-            client_datasets.append(client_subset)
-        client_datasets_per_round[round_num] = client_datasets
-    logger.info("All data partitions loaded successfully.")
-    return client_datasets_per_round
+            
+            # Check if the partition file exists
+            if os.path.exists(partition_path):
+                # Load the partition if it exists
+                with open(partition_path, 'rb') as f:
+                    indices = pickle.load(f)
+                client_subset = Subset(dataset, indices)
+                client_datasets.append(client_subset)
+            else:
+                # If partition is missing, assume the client has no data for this round
+                logger.warning(f"Partition missing for Client {client_id} in Round {round_num}. Skipping this client.")
+                client_datasets.append(Subset(dataset, []))  # Empty subset for this client
 
+        client_datasets_per_round[round_num] = client_datasets
+
+    logger.info("All available data partitions loaded successfully.")
+    return client_datasets_per_round
 
 def get_network(model_name, channel, num_classes, im_size=(32, 32), device='cpu'):
     """Initializes the network based on the model name."""
