@@ -503,7 +503,7 @@ def ResNet152(channel, num_classes):
     return ResNet(Bottleneck, [3,8,36,3], channel=channel, num_classes=num_classes)
 
 # Configure logging for utilities
-logger = logging.getLogger('FedAF.Utils')
+logger = logging.getLogger('Common.Utils')
 if not logger.handlers:
     log_directory = "/home/t914a431/log"
     os.makedirs(log_directory, exist_ok=True)
