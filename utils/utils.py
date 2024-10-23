@@ -625,7 +625,7 @@ def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
                 pickle.dump(indices, f)
     logger.info(f"All data partitions saved in directory: {save_dir}")
 
-def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio='1.0'):
+def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio):
     """
     Load pre-partitioned data for each client for each round.
 
