@@ -22,7 +22,7 @@ PYTHON_FILE_PLOT="main_plot.py"
 # parameters
 DATASET="CIFAR10"
 ALPHA_DIRICHLET=0.1
-HONESTY_RATIO=1
+HONESTY_RATIO=1.0
 MODEL="ConvNet"
 SAVE_DIR="/home/t914a431/results/"
 PARTITION_BASE_DIR="/home/t914a431/partitions_per_round"
