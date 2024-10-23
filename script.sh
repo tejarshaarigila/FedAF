@@ -1,25 +1,25 @@
 #!/bin/bash
 
 #SBATCH -p intel
-#SBATCH -N 1          # Number of nodes
-#SBATCH -n 1          # Number of tasks
-#SBATCH -c 20         # CPUs per task, depending on clients and workload (2 CPUs per client for 10 clients)
+#SBATCH -N 1              # Number of nodes
+#SBATCH -n 1              # Number of tasks
+#SBATCH -c 10             # Total number of CPUs
 #SBATCH --mem=32G     
-#SBATCH -t 48:00:00   
+#SBATCH -t 48:00:00       
 #SBATCH -J federated_exp
 #SBATCH -o slurm-%j.out
 
 # Export environment variables for thread management
-export OMP_NUM_THREADS=1  # Limit OpenMP to 1 thread per client
-export MKL_NUM_THREADS=1  # Limit MKL to 1 thread per client
+export OMP_NUM_THREADS=1  
+export MKL_NUM_THREADS=1 
 
-# Define Python scripts
+# Python scripts
 PYTHON_FILE_PARTITION="utils/generate_partitions.py"
 PYTHON_FILE_FEDAVG="main_fedavg.py"
 PYTHON_FILE_FEDAF="main_fedaf.py"
 PYTHON_FILE_PLOT="main_plot.py"
 
-# Define parameters
+# parameters
 DATASET="CIFAR10"
 ALPHA_DIRICHLET=0.1
 HONESTY_RATIO=1
@@ -27,7 +27,7 @@ MODEL="ConvNet"
 SAVE_DIR="/home/t914a431/results/"
 PARTITION_BASE_DIR="/home/t914a431/partitions_per_round"
 
-# Define the list of user counts for experiments
+# list of user counts for experiments
 NUM_USERS_LIST=(5 10 15 20)
 
 echo "========================================"
@@ -36,14 +36,12 @@ echo "Dataset: $DATASET"
 echo "Model: $MODEL"
 echo "========================================"
 
-# Clean existing data directories
 echo "Cleaning existing data directories..."
 rm -rf /home/t914a431/data/*
 mkdir -p /home/t914a431/data
 
-# Pre-download the CIFAR-10 dataset
 echo "Pre-downloading the CIFAR-10 dataset..."
-python3 -c "from torchvision import datasets; datasets.CIFAR10(root='/home/t914a431/data', train=True, download=True); datasets.CIFAR10(root='/home/t914a431/data', train=False, download=True)"
+srun -n 1 -c 1 python3 -c "from torchvision import datasets; datasets.CIFAR10(root='/home/t914a431/data', train=True, download=True); datasets.CIFAR10(root='/home/t914a431/data', train=False, download=True)"
 
 if [ $? -ne 0 ]; then
     echo "Error: Dataset download failed."
@@ -51,7 +49,6 @@ if [ $? -ne 0 ]; then
 fi
 echo "Dataset downloaded successfully."
 
-# Iterate over each number of users
 for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "========================================"
     echo "Starting experiments for NUM_USERS=${NUM_USERS}"
@@ -71,7 +68,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run generate_partitions.py
     echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    python3 $PYTHON_FILE_PARTITION \
+    srun -n 1 -c 10 python3 $PYTHON_FILE_PARTITION \
         --dataset $DATASET \
         --num_clients $NUM_USERS \
         --num_rounds 20 \
@@ -93,7 +90,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run FedAvg
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    python3 $PYTHON_FILE_FEDAVG \
+    srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
@@ -116,7 +113,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run FedAF
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    python3 $PYTHON_FILE_FEDAF \
+    srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAF \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
@@ -137,7 +134,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
 
     # Run main_plot.py
     echo "Running Plot: $PYTHON_FILE_PLOT for ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    python3 $PYTHON_FILE_PLOT \
+    srun -n 1 -c 10 python3 $PYTHON_FILE_PLOT \
         --dataset $DATASET \
         --model $MODEL \
         --num_users $NUM_USERS \
