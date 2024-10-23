@@ -657,16 +657,16 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
             logger.info(f"Checking partition path: {partition_path}")
 
             if os.path.exists(partition_path):
-            try:
-                with open(partition_path, 'rb') as f:
-                    indices = pickle.load(f)
-                logger.debug(f"Client {client_id} for round {round_num} has {len(indices)} data points.")
-                client_subset = Subset(dataset, indices)
-                client_datasets.append(client_subset)
-            except Exception as e:
-                logger.error(f"Error loading partition for Client {client_id} in Round {round_num}: {e}")
-                client_datasets.append(Subset(dataset, []))
-
+                try:
+                    with open(partition_path, 'rb') as f:
+                        indices = pickle.load(f)
+                    logger.debug(f"Client {client_id} for round {round_num} has {len(indices)} data points.")
+                    client_subset = Subset(dataset, indices)
+                    client_datasets.append(client_subset)
+                except Exception as e:
+                    logger.error(f"Error loading partition for Client {client_id} in Round {round_num}: {e}")
+                    client_datasets.append(Subset(dataset, []))
+                    
         client_datasets_per_round[round_num] = client_datasets
 
     logger.info("All available data partitions loaded successfully.")
