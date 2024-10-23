@@ -4,8 +4,8 @@
 #SBATCH -N 1          # Number of nodes
 #SBATCH -n 1          # Number of tasks
 #SBATCH -c 10         # CPUs per task
-#SBATCH --mem=32G      # Increased memory to accommodate multiple scripts
-#SBATCH -t 48:00:00   # Increased time limit to handle all experiments
+#SBATCH --mem=32G     
+#SBATCH -t 48:00:00   
 #SBATCH -J federated_exp
 #SBATCH -o slurm-%j.out
 
