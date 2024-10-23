@@ -1,4 +1,4 @@
-# scripts/generate_partitions.py
+# utils/generate_partitions.py
 
 import argparse
 from utils import load_data, partition_data_per_round, save_partitions
