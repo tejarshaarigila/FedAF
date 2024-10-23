@@ -3,7 +3,7 @@
 import torch
 import logging
 import os
-from utils.utils_fedavg import get_network
+from utils.utils import get_network
 
 class Server:
     def __init__(self, args):
