@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
     parser.add_argument('--num_rounds', type=int, default=20, help='Number of communication rounds')
-    parser.add_argument('--honesty_ratio', type=float, default=1.0, help='Ratio of honest clients (0 to 1)')
+    parser.add_argument('--honesty_ratio', type=int, default=1, help='Ratio of honest clients (0 to 1)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', 
                         help='Device to use (cuda or cpu)')
     parser.add_argument('--partition_dir', type=str, default='/home/t914a431/partitions_per_round',
