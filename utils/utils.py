@@ -61,7 +61,8 @@ def load_data(dataset_name, data_path='data'):
 
 def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
     """
-    Partition dataset into subsets for each client and each round using Dirichlet distribution.
+    Partition dataset into unique, non-overlapping subsets for each client and each round,
+    considering the total number of rounds and allowing for missing data for some clients.
 
     Args:
         dataset (torch.utils.data.Dataset): The dataset to partition.
@@ -111,10 +112,9 @@ def partition_data_per_round(dataset, num_clients, num_rounds, alpha, seed=42):
             split_indices = np.split(available_indices, np.cumsum(samples_per_client)[:-1])
 
             for client_id, indices in enumerate(split_indices):
+                if len(indices) == 0:
+                    logger.info(f"Client {client_id} received no data for class {c} in round {round_num + 1}.")
                 client_indices_per_round[round_num][client_id].extend(indices.tolist())
-
-            # Update remaining available indices for this class
-            label_indices[c] = available_indices[len(available_indices):]
 
     logger.info("Dataset partitioning completed successfully.")
     return client_indices_per_round
