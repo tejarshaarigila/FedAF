@@ -171,7 +171,7 @@ class Client:
         self.logger.info(f"Client {self.client_id}: Loading global model.")
         try:
             model = load_latest_model(
-                model_dir=os.path.join('/home/t914a431/models', self.args['dataset'], self.args['model'], str(self.args['num_partitions']), str(self.args['honesty_ratio'])),
+                model_dir=os.path.join('/home/t914a431/models', self.args['dataset'], self.args['model'], str(self.args['num_clients']), str(self.args['honesty_ratio'])),
                 model_name=self.model_name,
                 channel=self.channel,
                 num_classes=self.num_classes,
