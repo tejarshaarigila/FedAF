@@ -1,7 +1,7 @@
 # utils/generate_partitions.py
 
 import argparse
-from utils import load_data, partition_data_per_round, save_partitions
+from utils import load_data, partition_data_unique_rounds, save_partitions  # Updated import
 import logging
 import multiprocessing as mp
 import os
@@ -63,7 +63,7 @@ def main():
     
     # Partition the dataset using multiprocessing
     logger.info(f"Starting dataset partitioning with {args.num_workers} workers.")
-    client_indices_per_round = partition_data_per_round(
+    client_indices_per_round = partition_data_unique_rounds(
         dataset=dataset,
         num_clients=args.num_clients,
         num_rounds=args.num_rounds,
