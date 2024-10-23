@@ -9,7 +9,7 @@ import argparse
 import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils import load_data, partition_data_per_round, load_partitions, get_network, plot_accuracies
+from utils.utils import load_data, partition_data_unique_rounds, load_partitions, get_network, plot_accuracies
 from torch.utils.data import Subset
 
 def setup_main_logger(log_dir):
@@ -242,7 +242,7 @@ def simulate():
     # Generate and save partitions if they don't already exist
     if not os.path.exists(args.partition_dir):
         logger.info("No existing partitions found. Generating new partitions.")
-        client_indices_per_round = partition_data_per_round(
+        client_indices_per_round = partition_data_unique_rounds(
             dataset=base_dataset,
             num_clients=args.num_clients,
             num_rounds=args.rounds,
