@@ -223,6 +223,12 @@ def main():
                 ]
             )
 
+        # Filter out None values for clients that were skipped
+        client_models = [model for model in client_models if model is not None]
+        client_sizes = [len(client.train_data) for client in clients if len(client.train_data) > 0]
+        
+        logger.info("Clients have completed local training.")
+
         logger.info("Clients have completed local training.")
 
         # Compute client sizes
