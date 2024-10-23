@@ -10,7 +10,7 @@ def setup_logger():
     """
     Sets up the logger for the partition generation script.
     """
-    logger = mp.get_logger()
+    logger = logging.getLogger('GeneratePartitions')
     logger.setLevel(logging.INFO)
     
     if not logger.handlers:
@@ -18,7 +18,7 @@ def setup_logger():
         os.makedirs(log_directory, exist_ok=True)
         file_handler = logging.FileHandler(os.path.join(log_directory, 'generate_partitions.log'))
         console_handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(processName)s - %(message)s')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
         file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
