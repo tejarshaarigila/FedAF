@@ -1,7 +1,7 @@
 # scripts/generate_partitions.py
 
 import argparse
-from utils.utils import load_data, partition_data_per_round, save_partitions
+from utils import load_data, partition_data_per_round, save_partitions
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate Dataset Partitions for FedAF and FedAvg")
