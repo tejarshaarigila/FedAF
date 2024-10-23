@@ -7,7 +7,7 @@ import torch
 from torchvision.utils import save_image
 from torch import optim
 from torch.utils.data import DataLoader, Subset
-from utils.utils_fedaf import (
+from utils.utils import (
     load_latest_model,
     calculate_logits_labels,
     compute_swd,
