@@ -235,7 +235,7 @@ def simulate():
     logger = setup_main_logger(args.log_dir)
     logger.info("FedAF Main Logger Initialized.")
 
-    base_dataset = load_data(args.dataset, data_path='/home/t914a431/data')
+    base_dataset = load_data(args.dataset, data_path='/home/t914a431/data', train=True)
     
     if args.dataset == 'CIFAR10':
         args.channel = 3 
