@@ -64,7 +64,11 @@ def parse_args():
     return parser.parse_args()
 
 def train_client(client_id, train_data, global_model_state, args, honest):
-    """Helper function to train a client."""
+    """Helper function to train a client, skipping the client if no data."""
+    if len(train_data) == 0:  # Check if the dataset is empty
+        logging.info(f"Client {client_id}: No data for this round. Skipping.")
+        return None  # Skip this client if no data
+    
     # Recreate the client object with simpler arguments
     client = Client(client_id=client_id, train_data=train_data, args=args)
     client.set_model(global_model_state)
