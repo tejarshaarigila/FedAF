@@ -229,8 +229,6 @@ def main():
         
         logger.info("Clients have completed local training.")
 
-        logger.info("Clients have completed local training.")
-
         # Compute client sizes
         client_sizes = [len(client.train_data) for client in clients]
         logger.info("Client Sizes: %s", client_sizes)
