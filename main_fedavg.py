@@ -194,7 +194,7 @@ def main():
 
         # Update each client's data partition
         for client_id, client in enumerate(clients):
-            client.train_data = client_datasets[client_id]
+            client.update_train_data(client_datasets_per_round[current_round][client_id])
             if client_id not in honest_clients:
                 logger.info("Client %d is dishonest and will have randomized labels for round %d.", client_id, round_num)
                 client.train_data = randomize_labels(client.train_data)
