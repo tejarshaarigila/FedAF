@@ -267,7 +267,6 @@ def simulate():
         logger.info("Partitions directory found. Loading existing partitions.")
 
     # Load partitions
-    load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio='1.0'):
     client_datasets_per_round = load_partitions(
         dataset=base_dataset,
         num_clients=args.num_clients,
