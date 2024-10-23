@@ -64,15 +64,29 @@ class Client:
 
     def set_model(self, model_state_dict):
         """
-        Sets the client's model state to the global model state.
-
-        Args:
-            model_state_dict (dict): State dictionary of the global model.
+        Sets the client's model state to the global model state and resets the optimizer.
         """
         model_state_dict = {key: value.to(self.device) for key, value in model_state_dict.items()}
         self.model.load_state_dict(model_state_dict)
         self.logger.info("Client %d: Model state updated from global model.", self.client_id)
+        
+        # Reset optimizer to align with the new model state
+        self.optimizer = optim.SGD(self.model.parameters(), lr=self.args.lr)
+        self.logger.info("Client %d: Optimizer state reset after model update.", self.client_id)
 
+    def update_train_data(self, new_train_data):
+        """
+        Updates the client's training data and reinitializes the DataLoader.
+        """
+        self.train_data = new_train_data
+        self.train_loader = DataLoader(
+            self.train_data,
+            batch_size=self.args.batch_size,
+            shuffle=True,
+            num_workers=0  # Ensure num_workers=0 for multiprocessing
+        )
+        self.logger.info("Client %d: Training data updated for new round.", self.client_id)
+        
     def train(self):
         """
         Trains the local model on the client's data.
