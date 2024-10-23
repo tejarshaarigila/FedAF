@@ -5,8 +5,12 @@ import argparse
 import torch
 from server.server_fedavg import Server
 from client.client_fedavg import Client
-from utils.utils_fedavg import load_data
-from utils.plot_utils import plot_accuracies
+from utils.utils import (
+    load_data,
+    load_partitions,
+    get_network,
+    plot_accuracies
+)
 import logging
 import random
 import concurrent.futures
@@ -52,6 +56,10 @@ def parse_args():
     parser.add_argument('--honesty_ratio', type=float, default=1.0, help='Ratio of honest clients (0 to 1)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', 
                         help='Device to use (cuda or cpu)')
+    parser.add_argument('--partition_dir', type=str, default='/home/t914a431/partitions_per_round',
+                        help='Directory where data partitions per round are saved')
+    parser.add_argument('--save_dir', type=str, default='/home/t914a431/models', help='Directory to save models')
+    parser.add_argument('--log_dir', type=str, default='/home/t914a431/log/', help='Directory to save logs')
     return parser.parse_args()
 
 def train_client(client):
@@ -103,23 +111,41 @@ def randomize_labels(dataset):
     return dataset
 
 def main():
-    # Ensure the log directory exists
-    log_dir = "/home/t914a431/log/"
-    os.makedirs(log_dir, exist_ok=True)
+    # Parse arguments
+    args = parse_args()
+
+    # Set dataset-specific parameters
+    set_dataset_params(args)
 
     # Set up the main logger
-    logger = setup_main_logger(log_dir)
+    logger = setup_main_logger(args.log_dir)
     logger.info("FedAvg Main Logger Initialized.")
 
-    args = parse_args()
-    set_dataset_params(args)
     logger.info("Starting Federated Learning with %d clients", args.num_clients)
 
-    # Load data and distribute to clients
-    client_datasets, test_loader = load_data(dataset=args.dataset, alpha=args.alpha, num_clients=args.num_clients)
-    logger.info("Data loaded and distributed to clients.")
+    # Load the training dataset
+    train_dataset = load_data(args.dataset, data_path='/home/t914a431/data', train=True)
 
-    # Initialize server and clients
+    # Check if partition_dir exists
+    if not os.path.exists(args.partition_dir):
+        logger.error(f"Partition directory {args.partition_dir} does not exist. Please run generate_partitions.py first.")
+        raise FileNotFoundError(f"Partition directory {args.partition_dir} does not exist. Please run generate_partitions.py first.")
+
+    # Load pre-partitioned data
+    client_datasets_per_round = load_partitions(
+        dataset=train_dataset,
+        num_clients=args.num_clients,
+        num_rounds=args.num_rounds,
+        partition_dir=args.partition_dir
+    )
+    logger.info("Data partitions loaded successfully.")
+
+    # Load the testing dataset
+    test_dataset = load_data(args.dataset, data_path='/home/t914a431/data', train=False)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, num_workers=0)
+    logger.info("Test dataset loaded successfully.")
+
+    # Initialize server
     server = Server(args)
     logger.info("Server initialized.")
 
@@ -131,23 +157,38 @@ def main():
     logger.info("Honest Clients: %s", honest_clients)
     clients = []
 
+    # Initialize clients for the first round
+    current_round = 0  # Zero-based indexing
     for i in range(args.num_clients):
-        train_data = client_datasets[i]
+        train_data = client_datasets_per_round[current_round][i]
         if i not in honest_clients:
             logger.info("Client %d is dishonest and will have randomized labels.", i)
-            train_data = randomize_labels(train_data)  # Apply label switching
+            train_data = randomize_labels(train_data)  # Apply label randomization
         else:
             logger.info("Client %d is honest.", i)
         clients.append(Client(client_id=i, train_data=train_data, args=args))
 
-    # Lists to collect test accuracies
+    # Initialize list to store test accuracies
     test_accuracies = []
 
     # Federated learning rounds
     for round_num in range(1, args.num_rounds + 1):
         logger.info("\n--- Round %d ---", round_num)
 
-        # Distribute global model to clients
+        # Load partitioned data for each client for the current round
+        current_round = round_num - 1  # Zero-based indexing
+        client_datasets = client_datasets_per_round[current_round]
+
+        # Update each client's data partition
+        for client_id, client in enumerate(clients):
+            client.train_data = client_datasets[client_id]
+            if client_id not in honest_clients:
+                logger.info("Client %d is dishonest and will have randomized labels for round %d.", client_id, round_num)
+                client.train_data = randomize_labels(client.train_data)
+            else:
+                logger.info("Client %d is honest for round %d.", client_id, round_num)
+
+        # Distribute the latest global model to clients
         global_model = server.get_global_model_state()
         for client in clients:
             client.set_model(global_model)
@@ -182,7 +223,9 @@ def main():
         model_name=args.model,
         dataset=args.dataset,
         alpha=args.alpha,
-        num_clients=args.num_clients
+        num_partitions=args.num_clients,
+        num_clients=args.num_clients,  # FedAvg specific
+        save_dir=args.save_dir
     )
 
     logger.info("Federated Learning completed. Test accuracy graph saved.")
