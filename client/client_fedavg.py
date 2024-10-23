@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import torch.optim as optim
-from utils.utils import get_network  # Updated import
+from utils.utils import get_network
 import logging
 import os
 
