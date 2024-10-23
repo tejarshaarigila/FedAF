@@ -268,7 +268,7 @@ def simulate():
 
     # Load partitions
     client_datasets_per_round = load_partitions(
-        dataset=args.dataset,
+        dataset=base_dataset,
         num_clients=args.num_clients,
         num_rounds=args.rounds,
         partition_dir=args.partition_dir,
