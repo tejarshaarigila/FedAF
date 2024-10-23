@@ -231,15 +231,28 @@ def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: s
         logger.error(f"Server: Error saving aggregated logits to {global_logits_path} - {e}")
 
 def simulate():
-    # Define the log directory
     args = parse_args()
     logger = setup_main_logger(args.log_dir)
     logger.info("FedAF Main Logger Initialized.")
 
-    # Load the dataset
     base_dataset = load_data(args.dataset, data_path='/home/t914a431/data')
+    
+    if args.dataset == 'CIFAR10':
+        args.channel = 3 
+        args.num_classes = 10 
+        args.im_size = (32, 32)
+    elif args.dataset == 'MNIST':
+        args.channel = 1
+        args.num_classes = 10
+        args.im_size = (28, 28)
+    elif args.dataset == 'CelebA':
+        args.channel = 3
+        args.num_classes = 2
+        args.im_size = (64, 64)
+    else:
+        logger.error(f"Unsupported dataset: {args.dataset}")
+        return
 
-    # Generate and save partitions if they don't already exist
     if not os.path.exists(args.partition_dir):
         logger.info("No existing partitions found. Generating new partitions.")
         client_indices_per_round = partition_data_unique_rounds(
@@ -261,14 +274,13 @@ def simulate():
         partition_dir=args.partition_dir
     )
 
-    # Initialize the global model and save it if it's the first round
+    # Initialize the global model
     model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio))
     global_model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     if not os.path.exists(global_model_path):
         logger.info("[+] Initializing Global Model")
         initialize_global_model(args, logger)
 
-    # Initialize list to store test accuracies
     test_accuracies = []
 
     # Main communication rounds
@@ -335,7 +347,6 @@ def simulate():
             logger=logger
         )
 
-        # Collect test accuracy
         test_accuracies.append(server_accuracy)
 
         logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
