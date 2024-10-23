@@ -142,7 +142,10 @@ def main():
         dataset=train_dataset,
         num_clients=args.num_clients,
         num_rounds=args.num_rounds,
-        partition_dir=args.partition_dir
+        partition_dir=args.partition_dir,
+        dataset_name=args.dataset,
+        model_name=args.model,
+        honesty_ratio=args.honesty_ratio
     )
     logger.info("Data partitions loaded successfully.")
 
