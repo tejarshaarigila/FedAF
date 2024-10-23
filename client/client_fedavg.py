@@ -69,6 +69,7 @@ class Client:
         Args:
             model_state_dict (dict): State dictionary of the global model.
         """
+        model_state_dict = {key: value.to(self.device) for key, value in model_state_dict.items()}
         self.model.load_state_dict(model_state_dict)
         self.logger.info("Client %d: Model state updated from global model.", self.client_id)
 
