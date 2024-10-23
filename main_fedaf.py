@@ -273,7 +273,7 @@ def simulate():
         num_rounds=args.rounds,
         partition_dir=args.partition_dir,
         dataset_name=args.dataset,
-        model_name=args.model_name,
+        model_name=args.model,
         honesty_ratio=args.honesty_ratio
     )
 
