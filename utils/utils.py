@@ -644,7 +644,7 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
     """
     client_datasets_per_round = {}
     # Construct the full path to the partitions
-    base_partition_path = partition_dir
+    base_partition_path = os.path.join(partition_dir, dataset, model_name, str(num_clients), str(honesty_ratio))
     
     for round_num in range(num_rounds):
         # Navigate to the round-specific directory
