@@ -10,8 +10,8 @@
 #SBATCH -o slurm-%j.out
 
 # Export environment variables for thread management
-export OMP_NUM_THREADS=10
-export MKL_NUM_THREADS=10
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
 # Define Python scripts
 PYTHON_FILE_PARTITION="utils/generate_partitions.py"
