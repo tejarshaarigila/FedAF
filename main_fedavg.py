@@ -14,7 +14,7 @@ from utils.utils import (
 import logging
 import random
 from torch.utils.data import DataLoader
-import concurrent.futures
+import multiprocessing
 
 def setup_main_logger(log_dir):
     """
@@ -63,8 +63,13 @@ def parse_args():
     parser.add_argument('--log_dir', type=str, default='/home/t914a431/log/', help='Directory to save logs')
     return parser.parse_args()
 
-def train_client(client):
+def train_client(client_id, train_data, global_model_state, args, honest):
     """Helper function to train a client."""
+    # Recreate the client object with simpler arguments
+    client = Client(client_id=client_id, train_data=train_data, args=args)
+    client.set_model(global_model_state)
+    if not honest:
+        train_data = randomize_labels(train_data)
     return client.train()
 
 def set_dataset_params(args):
@@ -195,10 +200,10 @@ def main():
             client.set_model(global_model)
         logger.info("Global model distributed to clients.")
 
-        # Clients perform local training in parallel
-        with concurrent.futures.ProcessPoolExecutor(max_workers=args.num_clients) as executor:
-            # Execute training
-            client_models = list(executor.map(train_client, clients))
+        # Clients perform local training in parallel using multiprocessing.Pool
+        with multiprocessing.Pool(processes=args.num_clients) as pool:
+            client_models = pool.starmap(train_client, [(client.client_id, client.train_data, global_model, args, client_id in honest_clients) for client_id, client in enumerate(clients)])
+
         logger.info("Clients have completed local training.")
 
         # Compute client sizes
