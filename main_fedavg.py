@@ -124,7 +124,7 @@ def main():
     logger.info("Starting Federated Learning with %d clients", args.num_clients)
 
     # Load the training dataset
-    train_dataset = load_data(args.dataset, data_path='/home/t914a431/data')
+    train_dataset = load_data(args.dataset, data_path='/home/t914a431/data', train=True)
 
     # Check if partition_dir exists
     if not os.path.exists(args.partition_dir):
