@@ -4,78 +4,140 @@
 #SBATCH -N 1          # Number of nodes
 #SBATCH -n 1          # Number of tasks
 #SBATCH -c 10         # CPUs per task
-#SBATCH --mem=16G
-#SBATCH -t 30:00:00
-#SBATCH -J cifar10
+#SBATCH --mem=32G      # Increased memory to accommodate multiple scripts
+#SBATCH -t 48:00:00   # Increased time limit to handle all experiments
+#SBATCH -J federated_exp
 #SBATCH -o slurm-%j.out
 
+# Export environment variables for thread management
 export OMP_NUM_THREADS=5
 export MKL_NUM_THREADS=5
 
+# Define Python scripts
+PYTHON_FILE_PARTITION="utils/generate_partitions.py"
 PYTHON_FILE_FEDAVG="main_fedavg.py"
 PYTHON_FILE_FEDAF="main_fedaf.py"
 PYTHON_FILE_PLOT="main_plot.py"
 
-# parameters
+# Define parameters
 DATASET="CIFAR10"
 ALPHA_DIRICHLET=0.1
 HONESTY_RATIO=1
 MODEL="ConvNet"
 SAVE_DIR="/home/t914a431/results/"
+PARTITION_BASE_DIR="/home/t914a431/partitions_per_round"
 
+# Define the list of user counts for experiments
 NUM_USERS_LIST=(5 10 15 20)
 
-echo "Cleaning existing data directories..."
-rm -rf data/*
+echo "========================================"
+echo "Starting Federated Learning Experiments"
+echo "Dataset: $DATASET"
+echo "Model: $MODEL"
+echo "========================================"
 
+# Clean existing data directories
+echo "Cleaning existing data directories..."
+rm -rf /home/t914a431/data/*
+mkdir -p /home/t914a431/data
+
+# Pre-download the CIFAR-10 dataset
 echo "Pre-downloading the CIFAR-10 dataset..."
-python3 -c "from torchvision import datasets; datasets.CIFAR10(root='data', train=True, download=True); datasets.CIFAR10(root='data', train=False, download=True)"
+python3 -c "from torchvision import datasets; datasets.CIFAR10(root='/home/t914a431/data', train=True, download=True); datasets.CIFAR10(root='/home/t914a431/data', train=False, download=True)"
 
 if [ $? -ne 0 ]; then
     echo "Error: Dataset download failed."
     exit 1
 fi
+echo "Dataset downloaded successfully."
 
+# Iterate over each number of users
 for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "========================================"
     echo "Starting experiments for NUM_USERS=${NUM_USERS}"
     echo "========================================"
 
+    # Define directories specific to the current experiment
     MODEL_BASE_DIR="/home/t914a431/models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
+    PARTITION_DIR="${PARTITION_BASE_DIR}/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
 
-    echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_FEDAF \
+    # Create necessary directories
+    mkdir -p "$MODEL_BASE_DIR"
+    mkdir -p "$PARTITION_DIR"
+
+    echo "----------------------------------------"
+    echo "Step 1: Generating Data Partitions"
+    echo "----------------------------------------"
+
+    # Run generate_partitions.py
+    echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
+    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_PARTITION \
         --dataset $DATASET \
-        --model $MODEL \
-        --num_partitions $NUM_USERS \
+        --num_clients $NUM_USERS \
+        --num_rounds 20 \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO \
-        --save_path "$MODEL_BASE_DIR"
-    
-    status_fedaf=$?
-    if [ $status_fedaf -ne 0 ]; then
-        echo "Error: FedAF script failed for NUM_USERS=${NUM_USERS}."
+        --data_path "/home/t914a431/data" \
+        --save_dir "$PARTITION_DIR" \
+        --seed 42
+
+    status_partition=$?
+    if [ $status_partition -ne 0 ]; then
+        echo "Error: Partition generation failed for NUM_USERS=${NUM_USERS}."
         exit 1
     fi
+    echo "Partition generation completed successfully for NUM_USERS=${NUM_USERS}."
 
+    echo "----------------------------------------"
+    echo "Step 2: Running FedAvg"
+    echo "----------------------------------------"
+
+    # Run FedAvg
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_FEDAVG \
+    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
         --model $MODEL \
         --num_clients $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO
-    
+        --honesty_ratio $HONESTY_RATIO \
+        --partition_dir "$PARTITION_DIR" \
+        --save_dir "$MODEL_BASE_DIR" \
+        --log_dir "/home/t914a431/log/"
+
     status_fedavg=$?
     if [ $status_fedavg -ne 0 ]; then
         echo "Error: FedAvg script failed for NUM_USERS=${NUM_USERS}."
         exit 1
     fi
+    echo "FedAvg script completed successfully for NUM_USERS=${NUM_USERS}."
 
-    echo "FedAF and FedAvg scripts completed successfully for NUM_USERS=${NUM_USERS}."
+    echo "----------------------------------------"
+    echo "Step 3: Running FedAF"
+    echo "----------------------------------------"
 
+    # Run FedAF
+    echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
+    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_FEDAF \
+        --dataset $DATASET \
+        --model $MODEL \
+        --num_clients $NUM_USERS \
+        --alpha $ALPHA_DIRICHLET \
+        --honesty_ratio $HONESTY_RATIO \
+        --partition_dir "$PARTITION_DIR"
+
+    status_fedaf=$?
+    if [ $status_fedaf -ne 0 ]; then
+        echo "Error: FedAF script failed for NUM_USERS=${NUM_USERS}."
+        exit 1
+    fi
+    echo "FedAF script completed successfully for NUM_USERS=${NUM_USERS}."
+
+    echo "----------------------------------------"
+    echo "Step 4: Running Plotting Script"
+    echo "----------------------------------------"
+
+    # Run main_plot.py
     echo "Running Plot: $PYTHON_FILE_PLOT for ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 --mem=16G python3 $PYTHON_FILE_PLOT \
+    srun -n 1 -c 10 --mem=32G python3 $PYTHON_FILE_PLOT \
         --dataset $DATASET \
         --model $MODEL \
         --num_users $NUM_USERS \
@@ -84,15 +146,16 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --model_base_dir "$MODEL_BASE_DIR" \
         --save_dir "$SAVE_DIR"
 
-    if [ $? -ne 0 ]; then
+    status_plot=$?
+    if [ $status_plot -ne 0 ]; then
         echo "Error: Plot script failed for NUM_USERS=${NUM_USERS}."
         exit 1
     fi
-
     echo "Plot script completed successfully for NUM_USERS=${NUM_USERS}."
+
     echo "========================================"
     echo "Completed experiments for NUM_USERS=${NUM_USERS}"
     echo "========================================"
 done
 
-echo "All experiments for CIFAR10 completed successfully."
+echo "All experiments for $DATASET completed successfully."
