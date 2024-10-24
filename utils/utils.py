@@ -641,15 +641,6 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
     """
     client_datasets_per_round = {}
 
-    # Construct the full partition directory path
-    partition_dir = os.path.join(
-        partition_dir,
-        dataset_name,
-        model_name,
-        str(num_clients),
-        str(honesty_ratio)
-    )
-
     for round_num in range(num_rounds):
         round_dir = os.path.join(partition_dir, f'round_{round_num}')
         client_datasets = []
