@@ -7,6 +7,7 @@ import multiprocessing as mp
 import os
 import matplotlib.pyplot as plt  # New import for plotting
 import numpy as np  # New import for numerical operations
+import matplotlib.cm as cm  # For color mapping
 
 def setup_logger():
     """
@@ -45,9 +46,9 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=4, help='Number of worker processes for multiprocessing')
     return parser.parse_args()
 
-def plot_data_distribution(client_indices_per_round, save_path, num_clients, num_rounds):
+def plot_data_distribution_bubble(client_indices_per_round, save_path, num_clients, num_rounds):
     """
-    Plots and saves the data distribution across clients for each round.
+    Plots and saves the data distribution across clients for each round using a bubble chart.
 
     Args:
         client_indices_per_round (list): List containing client indices for each round.
@@ -63,19 +64,42 @@ def plot_data_distribution(client_indices_per_round, save_path, num_clients, num
             data_counts[round_idx, client_idx] = len(indices)
     
     rounds = np.arange(1, num_rounds + 1)
+    clients = np.arange(1, num_clients + 1)
+
+    # Create a color map
+    cmap = cm.get_cmap('tab20', num_clients)  # Choose a colormap with enough distinct colors
+    colors = [cmap(i) for i in range(num_clients)]
+
+    plt.figure(figsize=(16, 10))
     
-    plt.figure(figsize=(12, 8))
+    # Create a meshgrid for rounds and clients
+    X, Y = np.meshgrid(rounds, clients)
+    X = X.flatten()
+    Y = Y.flatten()
+    sizes = data_counts.flatten()
+
+    # Normalize sizes for better visualization
+    sizes_normalized = (sizes / sizes.max()) * 1000  # Adjust the multiplier as needed
+
+    # Assign colors to each client
+    client_colors = np.repeat(range(num_clients), num_rounds)
+    color_values = [colors[client] for client in client_colors]
+
+    scatter = plt.scatter(X, Y, s=sizes_normalized, c=client_colors, cmap='tab20', alpha=0.6, edgecolors='w', linewidth=0.5)
+
+    plt.xlabel('Communication Rounds', fontsize=14)
+    plt.ylabel('Clients', fontsize=14)
+    plt.title('Data Distribution Across Clients per Round', fontsize=16)
+    plt.xticks(ticks=np.arange(1, num_rounds + 1, max(1, num_rounds//10)))
+    plt.yticks(ticks=np.arange(1, num_clients + 1, max(1, num_clients//10)))
     
-    for client in range(num_clients):
-        plt.plot(rounds, data_counts[:, client], label=f'Client {client+1}')
+    # Create a legend for clients
+    handles, labels = scatter.legend_elements(prop="colors", alpha=0.6)
+    legend_labels = [f'Client {i+1}' for i in range(num_clients)]
+    legend = plt.legend(handles, legend_labels, title="Clients", bbox_to_anchor=(1.05, 1), loc='upper left')
     
-    plt.xlabel('Communication Rounds')
-    plt.ylabel('Number of Data Samples')
-    plt.title('Data Distribution Across Clients per Round')
-    plt.legend(loc='upper right', bbox_to_anchor=(1.15, 1))
     plt.tight_layout()
-    
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300)
     plt.close()
 
 def main():
@@ -122,15 +146,15 @@ def main():
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
     
     # Generate and save the data distribution graph
-    graph_save_path = os.path.join(partitions_save_dir, 'data_distribution.png')
-    logger.info(f"Generating data distribution graph and saving to: {graph_save_path}")
-    plot_data_distribution(
+    graph_save_path = os.path.join(partitions_save_dir, 'data_distribution_bubble.png')
+    logger.info(f"Generating data distribution bubble chart and saving to: {graph_save_path}")
+    plot_data_distribution_bubble(
         client_indices_per_round=client_indices_per_round,
         save_path=graph_save_path,
         num_clients=args.num_clients,
         num_rounds=args.num_rounds
     )
-    logger.info("Data distribution graph generated and saved successfully.")
+    logger.info("Data distribution bubble chart generated and saved successfully.")
 
 if __name__ == "__main__":
     main()
