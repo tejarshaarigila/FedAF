@@ -67,8 +67,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --num_clients $NUM_USERS \
         --num_rounds 20 \
         --alpha $ALPHA_DIRICHLET \
-        --data_path "/home/t914a431/data" \
-        --save_dir "$PARTITION_DIR" \
+        --honesty_ratio $HONESTY_RATIO \
         --seed 42
 
     status_partition=$?
@@ -90,8 +89,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --alpha $ALPHA_DIRICHLET \
         --honesty_ratio $HONESTY_RATIO \
         --partition_dir "$PARTITION_DIR" \
-        --save_dir "$MODEL_BASE_DIR" \
-        --log_dir "/home/t914a431/log/"
+        --save_dir "$MODEL_BASE_DIR"
 
     status_fedaf=$?
     if [ $status_fedaf -ne 0 ]; then
