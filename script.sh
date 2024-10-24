@@ -62,12 +62,17 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "----------------------------------------"
 
     echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
-    srun -n 1 -c 10 python3 $PYTHON_FILE_PARTITION \
+    
+    python3 utils/generate_partitions.py \
         --dataset $DATASET \
+        --model $MODEL \
         --num_clients $NUM_USERS \
         --num_rounds 20 \
         --alpha $ALPHA_DIRICHLET \
-        --seed 42
+        --data_path "/home/t914a431/data" \
+        --save_dir "/home/t914a431/partitions_per_round" \
+        --seed 42 \
+        --num_workers 4
 
     status_partition=$?
     if [ $status_partition -ne 0 ]; then
