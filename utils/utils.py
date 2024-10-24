@@ -1,16 +1,24 @@
 # utils/utils.py
 
+import logging
 import os
 import pickle
+import time
+
+import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import wasserstein_distance
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Subset, DataLoader, TensorDataset
 from torchvision import datasets, transforms
-from scipy.stats import wasserstein_distance
-import logging
-import time
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # networks
 ''' Swish activation '''
@@ -501,55 +509,50 @@ def ResNet101(channel, num_classes):
 
 def ResNet152(channel, num_classes):
     return ResNet(Bottleneck, [3,8,36,3], channel=channel, num_classes=num_classes)
+def get_default_convnet_setting():
+    """Provides default settings for the ConvNet architecture."""
+    net_width = 128
+    net_depth = 3
+    net_act = 'relu'
+    net_norm = 'instancenorm'
+    net_pooling = 'avgpooling'
+    return net_width, net_depth, net_act, net_norm, net_pooling
 
-# Configure logging for utilities
-logger = logging.getLogger('Common.Utils')
-if not logger.handlers:
-    log_directory = "/home/t914a431/log"
-    os.makedirs(log_directory, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(log_directory, 'utils.log'))
-    console_handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-    logger.setLevel(logging.INFO)
 
 def load_data(dataset_name, data_path='data', train=True):
     """Load the dataset and apply necessary transformations."""
-    logger.info("Loading dataset: %s", dataset_name)
+    logger.info(f"Loading dataset: {dataset_name}")
     if dataset_name == 'CIFAR10':
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=(0.4914, 0.4822, 0.4465),
                                  std=(0.2023, 0.1994, 0.2010))
         ])
-        dataset = datasets.CIFAR10(root=data_path, train=True, download=True, transform=transform)
+        dataset = datasets.CIFAR10(root=data_path, train=train, download=True, transform=transform)
     elif dataset_name == 'MNIST':
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
         ])
-        dataset = datasets.MNIST(root=data_path, train=True, download=True, transform=transform)
+        dataset = datasets.MNIST(root=data_path, train=train, download=True, transform=transform)
     elif dataset_name == 'CelebA':
         transform = transforms.Compose([
             transforms.Resize((64, 64)),
             transforms.ToTensor()
         ])
-        dataset = datasets.CelebA(root=data_path, split='train', download=True, transform=transform)
+        dataset = datasets.CelebA(root=data_path, split='train' if train else 'test', download=True, transform=transform)
     else:
         logger.error(f"Unsupported dataset: {dataset_name}")
         raise ValueError(f"Unsupported dataset: {dataset_name}")
     logger.info("Dataset loaded successfully.")
     return dataset
 
+
 def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=42):
     """
     Partition the dataset into unique, non-overlapping subsets for each client across all rounds,
     ensuring no data is reused in subsequent rounds.
     """
-    logger = logging.getLogger('Common.Utils')
     np.random.seed(seed)
     torch.manual_seed(seed)
     logger.info("Starting dataset partitioning across all rounds and clients with Dirichlet distribution.")
@@ -567,79 +570,40 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
     total_allocations = num_rounds * num_clients
 
     # Initialize client_indices_per_round as a list
-    client_indices_per_round = [[] for _ in range(num_rounds)]
-    for round_num in range(num_rounds):
-        client_indices_per_round[round_num] = [[] for _ in range(num_clients)]
+    client_indices_per_round = [[[] for _ in range(num_clients)] for _ in range(num_rounds)]
 
     for c in range(num_classes):
         available_indices = label_indices[c]
         total_samples = len(available_indices)
         if total_samples < total_allocations:
             logger.warning(f"Not enough data for class {c}. Needed: {total_allocations}, Available: {total_samples}")
-            # Optionally, handle this scenario as needed
-            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
+            allocations = np.random.dirichlet([alpha] * total_allocations)
+            allocations = (allocations / allocations.sum()) * total_samples
             allocations = allocations.astype(int)
             allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
         else:
-            # Allocate without exceeding available samples
-            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
+            allocations = np.random.dirichlet([alpha] * total_allocations)
+            allocations = (allocations / allocations.sum()) * total_samples
             allocations = allocations.astype(int)
-            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
+            allocations[-1] = total_samples - allocations[:-1].sum()
 
         # Assign allocations to each round and client
         start = 0
-        for round_num in range(num_rounds):
-            for client_id in range(num_clients):
-                allocation_index = round_num * num_clients + client_id
-                if allocation_index >= len(allocations):
-                    num_samples = 0
-                else:
-                    num_samples = allocations[allocation_index]
-                end = start + num_samples
-                if end > total_samples:
-                    end = total_samples
-                client_indices_per_round[round_num][client_id].extend(available_indices[start:end])
-                start = end
-                if start >= total_samples:
-                    break
-            if start >= total_samples:
-                break
-
-    return client_indices_per_round
-
-    for c in range(num_classes):
-        available_indices = label_indices[c]
-        total_samples = len(available_indices)
-        if total_samples < total_allocations:
-            logger.warning(f"Not enough data for class {c}. Needed: {total_allocations}, Available: {total_samples}")
-            # Optionally, you can decide to allow some reuse or handle this differently
-            # For now, we'll proceed by allocating as much as possible
-            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
-            allocations = allocations.astype(int)
-            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
-        else:
-            # Allocate without exceeding available samples
-            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
-            allocations = allocations.astype(int)
-            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
-
-        # Assign allocations to each round and client
-        start = 0
-        for round_num in range(num_rounds):
-            for client_id in range(num_clients):
-                num_samples = allocations[round_num * num_clients + client_id]
-                end = start + num_samples
-                if end > total_samples:
-                    end = total_samples
-                client_indices_per_round[round_num][client_id].extend(available_indices[start:end])
-                start = end
-                if start >= total_samples:
-                    break
+        for allocation_index in range(total_allocations):
+            round_num = allocation_index // num_clients
+            client_id = allocation_index % num_clients
+            num_samples = allocations[allocation_index]
+            end = start + num_samples
+            if end > total_samples:
+                end = total_samples
+            client_indices_per_round[round_num][client_id].extend(available_indices[start:end])
+            start = end
             if start >= total_samples:
                 break
 
     logger.info("Dataset partitioning across all rounds and clients completed successfully.")
     return client_indices_per_round
+
 
 def save_partitions(client_indices_per_round, save_dir):
     """
@@ -649,7 +613,6 @@ def save_partitions(client_indices_per_round, save_dir):
         client_indices_per_round (list): A list where each element corresponds to a round and contains a list of lists of client indices.
         save_dir (str): Directory where partitions are to be saved.
     """
-    logger = logging.getLogger('GeneratePartitions')
     for round_num, client_indices in enumerate(client_indices_per_round):
         round_dir = os.path.join(save_dir, f'round_{round_num}')
         os.makedirs(round_dir, exist_ok=True)
@@ -662,13 +625,8 @@ def save_partitions(client_indices_per_round, save_dir):
             except Exception as e:
                 logger.error(f"Failed to save partition for Client {client_id} in Round {round_num}: {e}")
 
-import os
-import torch
-import pickle
-from torch.utils.data import Subset
-import logging
 
-def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio):
+def load_partitions(dataset, num_clients, num_rounds, partition_dir):
     """
     Load pre-partitioned data for each client for each round.
 
@@ -677,27 +635,18 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
         num_clients (int): Number of clients.
         num_rounds (int): Number of communication rounds.
         partition_dir (str): Directory where partitions are saved.
-        dataset_name (str): Name of the dataset (e.g., CIFAR10, MNIST).
-        model_name (str): Model used for the partitioning (e.g., ConvNet, ResNet).
-        honesty_ratio (str): Honesty ratio, as part of the directory structure.
 
     Returns:
         dict: A dictionary with keys as round numbers and values as lists of Subset datasets for each client.
-              If a partition is missing, the client will have an empty dataset for that round.
     """
     client_datasets_per_round = {}
-    logger = logging.getLogger('FedAF.Main')  # Ensure logger is obtained correctly
 
     for round_num in range(num_rounds):
-        # Navigate to the round-specific directory
         round_dir = os.path.join(partition_dir, f'round_{round_num}')
         client_datasets = []
         for client_id in range(num_clients):
             partition_path = os.path.join(round_dir, f'client_{client_id}_partition.pkl')
-            
-            # Log the exact path being checked
             logger.info(f"Checking partition path: {partition_path}")
-
             if os.path.exists(partition_path):
                 try:
                     with open(partition_path, 'rb') as f:
@@ -707,59 +656,33 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
                     client_datasets.append(client_subset)
                 except Exception as e:
                     logger.error(f"Error loading partition for Client {client_id} in Round {round_num}: {e}")
-                    client_datasets.append(Subset(dataset, []))  # Append empty Subset on error
+                    client_datasets.append(Subset(dataset, []))
             else:
-                # Append empty Subset if partition file is missing
                 logger.warning(f"Round {round_num}, Client {client_id}: Partition file missing. Assigning empty dataset.")
                 client_datasets.append(Subset(dataset, []))
-                    
         client_datasets_per_round[round_num] = client_datasets
 
     logger.info("All data partitions loaded successfully.")
     return client_datasets_per_round
 
+
 def get_network(model_name, channel, num_classes, im_size=(32, 32), device='cpu'):
     """Initializes the network based on the model name."""
-    torch.random.manual_seed(int(time.time() * 1000) % 100000)
+    torch.manual_seed(int(time.time() * 1000) % 100000)
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
 
     if model_name == 'MLP':
         net = MLP(channel=channel, num_classes=num_classes)
     elif model_name == 'ConvNet':
         net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth,
-                     net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model_name == 'LeNet':
-        net = LeNet(channel=channel, num_classes=num_classes)
-    elif model_name == 'AlexNet':
-        net = AlexNet(channel=channel, num_classes=num_classes)
-    elif model_name == 'AlexNetBN':
-        net = AlexNetBN(channel=channel, num_classes=num_classes)
-    elif model_name == 'VGG11':
-        net = VGG11(channel=channel, num_classes=num_classes)
-    elif model_name == 'VGG11BN':
-        net = VGG11BN(channel=channel, num_classes=num_classes)
-    elif model_name == 'ResNet18':
-        net = ResNet18(channel=channel, num_classes=num_classes)
-    elif model_name == 'ResNet18BN_AP':
-        net = ResNet18BN_AP(channel=channel, num_classes=num_classes)
-    elif model_name == 'ResNet18BN':
-        net = ResNet18BN(channel=channel, num_classes=num_classes)
+                      net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
     else:
         logger.error(f"Unsupported model '{model_name}'.")
         raise ValueError(f"Unsupported model '{model_name}'.")
-    
+
     net = net.to(device)
     logger.info(f"Initialized model '{model_name}' on device '{device}'.")
     return net
-
-def get_default_convnet_setting():
-    """Provides default settings for the ConvNet architecture."""
-    net_width = 128
-    net_depth = 3
-    net_act = 'relu'
-    net_norm = 'instancenorm'
-    net_pooling = 'avgpooling'
-    return net_width, net_depth, net_act, net_norm, net_pooling
 
 
 def compute_swd(logits1, logits2, num_projections=100):
@@ -779,30 +702,21 @@ def compute_swd(logits1, logits2, num_projections=100):
     if isinstance(logits2, torch.Tensor):
         logits2 = logits2.detach().cpu().numpy()
 
-    # Check if logits are valid arrays
     if logits1.ndim == 0 or logits2.ndim == 0:
-        return 0.0  # Return zero distance if logits are scalars or zero-dimensional
+        return 0.0
 
     dimensions = logits1.shape[0]
     if dimensions == 0:
-        return 0.0  # Return zero distance if dimension is zero
+        return 0.0
 
-    # Generate projections
     projections = np.random.normal(0, 1, (num_projections, dimensions))
     projections /= np.linalg.norm(projections, axis=1, keepdims=True)
 
-    # Project the logits
     projected_logits1 = projections.dot(logits1)
     projected_logits2 = projections.dot(logits2)
 
-    # Compute Wasserstein distance for each projection
-    distances = []
-    for i in range(num_projections):
-        distance = wasserstein_distance([projected_logits1[i]], [projected_logits2[i]])
-        distances.append(distance)
-    average_distance = np.mean(distances)
-    return average_distance
-
+    distances = [wasserstein_distance([projected_logits1[i]], [projected_logits2[i]]) for i in range(num_projections)]
+    return np.mean(distances)
 
 def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc, temperature):
     """
@@ -817,16 +731,11 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
         ipc (int): Instances per class.
         temperature (float): Temperature parameter for softmax.
     """
-
-    # Create subdirectories if they don't exist
     os.makedirs(path, exist_ok=True)
-
-    # Create DataLoader for the client's partition
     dataloader = DataLoader(partition, batch_size=256, shuffle=False)
 
-    # Initialize storage for logits and probabilities
-    logits_by_class = [torch.empty((0, num_classes), device=device) for _ in range(num_classes)]
-    probs_by_class = [torch.empty((0, num_classes), device=device) for _ in range(num_classes)]
+    logits_by_class = [[] for _ in range(num_classes)]
+    probs_by_class = [[] for _ in range(num_classes)]
 
     model_net.eval()
     with torch.no_grad():
@@ -838,23 +747,23 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
             for i in range(labels.size(0)):
                 label = labels[i].item()
                 if 0 <= label < num_classes:
-                    logits_by_class[label] = torch.cat((logits_by_class[label], logits[i].unsqueeze(0)), dim=0)
-                    probs_by_class[label] = torch.cat((probs_by_class[label], probs[i].unsqueeze(0)), dim=0)
+                    logits_by_class[label].append(logits[i].unsqueeze(0))
+                    probs_by_class[label].append(probs[i].unsqueeze(0))
                 else:
-                    logger.warning(f"calculate_logits_labels: Label {label} is out of range. Skipping.")
+                    logger.warning(f"Label {label} is out of range. Skipping.")
 
-    # Average logits and probabilities per class
     logits_avg = []
     probs_avg = []
     for c in range(num_classes):
-        if logits_by_class[c].size(0) >= ipc:
-            avg_logit = logits_by_class[c].mean(dim=0)
-            avg_prob = probs_by_class[c].mean(dim=0)
-            logger.debug(f"calculate_logits_labels: Class {c} - Avg Logit: {avg_logit}, Avg Prob: {avg_prob}")
+        if len(logits_by_class[c]) >= ipc:
+            class_logits = torch.cat(logits_by_class[c], dim=0)
+            class_probs = torch.cat(probs_by_class[c], dim=0)
+            avg_logit = class_logits.mean(dim=0)
+            avg_prob = class_probs.mean(dim=0)
         else:
             avg_logit = torch.zeros(num_classes, device=device)
             avg_prob = torch.zeros(num_classes, device=device)
-            logger.warning(f"calculate_logits_labels: Not enough instances for class {c}. Initialized avg_logit and avg_prob with zeros.")
+            logger.warning(f"Not enough instances for class {c}. Initialized with zeros.")
         logits_avg.append(avg_logit)
         probs_avg.append(avg_prob)
 
@@ -863,9 +772,9 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
         for c in range(num_classes):
             torch.save(logits_avg[c], os.path.join(path, f'Vkc_{c}.pt'))
             torch.save(probs_avg[c], os.path.join(path, f'Rkc_{c}.pt'))
-        logger.info(f"calculate_logits_labels: Saved averaged logits and probabilities to {path}.")
+        logger.info(f"Saved averaged logits and probabilities to {path}.")
     except Exception as e:
-        logger.error(f"calculate_logits_labels: Error saving logits and probabilities - {e}")
+        logger.error(f"Error saving logits and probabilities: {e}")
 
 
 def load_latest_model(model_dir, model_name, channel, num_classes, im_size, device):
@@ -900,10 +809,10 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
                 )
                 state_dict = torch.load(latest_model_file, map_location=device)
                 model.load_state_dict(state_dict)
-                logger.info(f"load_latest_model: Loaded model from {latest_model_file}.")
+                logger.info(f"Loaded model from {latest_model_file}.")
                 return model
         # If no model exists, initialize a new one
-        logger.info("load_latest_model: Model directory is empty or no valid model found. Initializing a new model.")
+        logger.info("Model directory is empty or no valid model found. Initializing a new model.")
         model = get_network(
             model_name=model_name,
             channel=channel,
@@ -913,7 +822,7 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
         )
         return model
     except Exception as e:
-        logger.error(f"load_latest_model: Error loading the latest model: {e}")
+        logger.error(f"Error loading the latest model: {e}")
         # Initialize a new model in case of error
         model = get_network(
             model_name=model_name,
@@ -923,7 +832,6 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
             device=device
         )
         return model
-
 
 def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     """
@@ -959,15 +867,15 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     for c in range(num_classes):
         if class_counts[c] > 0:
             avg_logit = class_logits_sum[c] / class_counts[c]
-            t_c = nn.functional.softmax(avg_logit / temperature, dim=0)
+            t_c = F.softmax(avg_logit / temperature, dim=0)
             t_list.append(t_c)
         else:
             # Initialize with uniform distribution if no data for class c
             t_list.append(torch.ones(num_classes, device=device) / num_classes)
-            logger.warning(f"compute_T: No synthetic data for class {c}. Initialized T with uniform distribution.")
+            logger.warning(f"No synthetic data for class {c}. Initialized T with uniform distribution.")
 
     t_tensor = torch.stack(t_list)  # [num_classes, num_classes]
-    logger.info("compute_T: Computed class-wise averaged soft labels T.")
+    logger.info("Computed class-wise averaged soft labels T.")
     return t_tensor
 
 
@@ -985,7 +893,7 @@ def get_eval_pool(eval_mode, model, model_eval):
     """
     if eval_mode == 'S':  # Self
         if 'BN' in model:
-            logger.warning('get_eval_pool: Replacing BatchNorm with InstanceNorm in evaluation.')
+            logger.warning('Replacing BatchNorm with InstanceNorm in evaluation.')
         try:
             bn_index = model.index('BN')
             model_eval_pool = [model[:bn_index]]
@@ -998,32 +906,28 @@ def get_eval_pool(eval_mode, model, model_eval):
     return model_eval_pool
 
 
-def plot_accuracies(test_accuracies, model_name, dataset, alpha, num_partitions, num_clients=None, save_dir='plots'):
+def plot_accuracies(test_accuracies, model_name, dataset_name, alpha, num_clients, save_dir='plots'):
     """
     Plots and saves the test accuracies over communication rounds.
 
     Args:
         test_accuracies (list): List of test accuracies per round.
         model_name (str): Name of the model used.
-        dataset (str): Name of the dataset used.
+        dataset_name (str): Name of the dataset used.
         alpha (float): Dirichlet distribution parameter.
-        num_partitions (int): Number of client partitions.
-        num_clients (int, optional): Number of clients (FedAvg only).
+        num_clients (int): Number of clients.
         save_dir (str): Directory to save the plot.
     """
-    import matplotlib.pyplot as plt
-
     os.makedirs(save_dir, exist_ok=True)
     rounds = range(1, len(test_accuracies) + 1)
     plt.figure()
     plt.plot(rounds, test_accuracies, marker='o')
-    plt.title(f"Test Accuracy over Rounds\nModel: {model_name}, Dataset: {dataset}, Alpha: {alpha}")
+    plt.title(f"Test Accuracy over Rounds\nModel: {model_name}, Dataset: {dataset_name}, Alpha: {alpha}")
     plt.xlabel("Round")
     plt.ylabel("Test Accuracy (%)")
     plt.grid(True)
-    if num_clients:
-        plt.legend([f"{num_clients} Clients"])
-    save_path = os.path.join(save_dir, f"accuracy_{model_name}_{dataset}_alpha{alpha}.png")
+    plt.legend([f"{num_clients} Clients"])
+    save_path = os.path.join(save_dir, f"accuracy_{model_name}_{dataset_name}_alpha{alpha}.png")
     plt.savefig(save_path)
     plt.close()
-    logger.info(f"plot_accuracies: Test accuracy graph saved to {save_path}.")
+    logger.info(f"Test accuracy graph saved to {save_path}.")
