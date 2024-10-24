@@ -625,6 +625,12 @@ def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
                 pickle.dump(indices, f)
     logger.info(f"All data partitions saved in directory: {save_dir}")
 
+import os
+import torch
+import pickle
+from torch.utils.data import Subset
+import logging
+
 def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio):
     """
     Load pre-partitioned data for each client for each round.
@@ -640,15 +646,14 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
 
     Returns:
         dict: A dictionary with keys as round numbers and values as lists of Subset datasets for each client.
-              If a partition is missing, the client will have no data for that round.
+              If a partition is missing, the client will have an empty dataset for that round.
     """
     client_datasets_per_round = {}
-    # Construct the full path to the partitions
-    base_partition_path = partition_dir
-    
+    logger = logging.getLogger('FedAF.Main')  # Ensure logger is obtained correctly
+
     for round_num in range(num_rounds):
         # Navigate to the round-specific directory
-        round_dir = os.path.join(base_partition_path, f'round_{round_num}')
+        round_dir = os.path.join(partition_dir, f'round_{round_num}')
         client_datasets = []
         for client_id in range(num_clients):
             partition_path = os.path.join(round_dir, f'client_{client_id}_partition.pkl')
@@ -665,11 +670,15 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_nam
                     client_datasets.append(client_subset)
                 except Exception as e:
                     logger.error(f"Error loading partition for Client {client_id} in Round {round_num}: {e}")
-                    client_datasets.append(Subset(dataset, []))
+                    client_datasets.append(Subset(dataset, []))  # Append empty Subset on error
+            else:
+                # Append empty Subset if partition file is missing
+                logger.warning(f"Round {round_num}, Client {client_id}: Partition file missing. Assigning empty dataset.")
+                client_datasets.append(Subset(dataset, []))
                     
         client_datasets_per_round[round_num] = client_datasets
 
-    logger.info("All available data partitions loaded successfully.")
+    logger.info("All data partitions loaded successfully.")
     return client_datasets_per_round
 
 def get_network(model_name, channel, num_classes, im_size=(32, 32), device='cpu'):
