@@ -9,7 +9,7 @@ import argparse
 import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils import load_data, partition_data_unique_rounds, load_partitions, get_network, plot_accuracies
+from utils.utils import load_data, partition_data_unique_rounds, load_partitions, get_network, plot_accuracies, save_partitions
 from torch.utils.data import Subset
 
 def setup_main_logger(log_dir):
@@ -252,17 +252,8 @@ def simulate():
     else:
         logger.error(f"Unsupported dataset: {args.dataset}")
         return
-
-    # Construct the full partition directory path to match where partitions are saved
-    partition_dir = os.path.join(
-        args.partition_dir,    
-        args.dataset,           
-        args.model,            
-        str(args.num_clients),  
-        str(args.honesty_ratio) 
-    )
     
-    if not os.path.exists(partition_dir):
+    if not os.path.exists(args.partition_dir):
         logger.error(f"Partitions directory {partition_dir} does not exist. Please generate partitions first.")
         client_indices_per_round = partition_data_unique_rounds(
             dataset=base_dataset,
