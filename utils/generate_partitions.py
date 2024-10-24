@@ -119,7 +119,7 @@ def main():
     
     # Load the dataset
     logger.info(f"Loading dataset: {args.dataset} from {args.data_path}")
-    dataset = load_data(args.dataset, data_path=args.data_path)
+    dataset = load_data(args.dataset, data_path=args.data_path, train=True)
     logger.info(f"Dataset loaded with {len(dataset)} samples.")
     
     # Partition the dataset using multiprocessing
