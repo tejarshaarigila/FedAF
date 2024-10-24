@@ -17,8 +17,6 @@ from torchvision import datasets, transforms
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Configure logger
-logger = logging.getLogger(__name__)
 
 # networks
 ''' Swish activation '''
