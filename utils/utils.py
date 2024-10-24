@@ -626,7 +626,7 @@ def save_partitions(client_indices_per_round, save_dir):
                 logger.error(f"Failed to save partition for Client {client_id} in Round {round_num}: {e}")
 
 
-def load_partitions(dataset, num_clients, num_rounds, partition_dir):
+def load_partitions(dataset, num_clients, num_rounds, partition_dir, dataset_name, model_name, honesty_ratio):
     """
     Load pre-partitioned data for each client for each round.
 
@@ -635,15 +635,25 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir):
         num_clients (int): Number of clients.
         num_rounds (int): Number of communication rounds.
         partition_dir (str): Directory where partitions are saved.
-
-    Returns:
-        dict: A dictionary with keys as round numbers and values as lists of Subset datasets for each client.
+        dataset_name (str): Name of the dataset.
+        model_name (str): Name of the model.
+        honesty_ratio (float): Honesty ratio.
     """
     client_datasets_per_round = {}
+
+    # Construct the full partition directory path
+    partition_dir = os.path.join(
+        partition_dir,
+        dataset_name,
+        model_name,
+        str(num_clients),
+        str(honesty_ratio)
+    )
 
     for round_num in range(num_rounds):
         round_dir = os.path.join(partition_dir, f'round_{round_num}')
         client_datasets = []
+        logger.info(f"--- Round {round_num} ---")
         for client_id in range(num_clients):
             partition_path = os.path.join(round_dir, f'client_{client_id}_partition.pkl')
             logger.info(f"Checking partition path: {partition_path}")
@@ -651,7 +661,15 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir):
                 try:
                     with open(partition_path, 'rb') as f:
                         indices = pickle.load(f)
-                    logger.debug(f"Client {client_id} for round {round_num} has {len(indices)} data points.")
+                    num_images = len(indices)
+                    logger.info(f"Client {client_id}: Assigned {num_images} images.")
+
+                    # Calculate the number of images per class
+                    labels = np.array(dataset.targets)[indices]
+                    unique_classes, class_counts = np.unique(labels, return_counts=True)
+                    class_distribution = dict(zip(unique_classes, class_counts))
+                    logger.info(f"Client {client_id}: Images per class: {class_distribution}")
+
                     client_subset = Subset(dataset, indices)
                     client_datasets.append(client_subset)
                 except Exception as e:
@@ -664,7 +682,6 @@ def load_partitions(dataset, num_clients, num_rounds, partition_dir):
 
     logger.info("All data partitions loaded successfully.")
     return client_datasets_per_round
-
 
 def get_network(model_name, channel, num_classes, im_size=(32, 32), device='cpu'):
     """Initializes the network based on the model name."""
