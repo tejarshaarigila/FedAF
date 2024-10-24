@@ -329,7 +329,7 @@ def simulate():
         server_accuracy = server_update(
             model_name=args.model,
             data=args.dataset,
-            num_clients=args.num_clients,
+            num_partitions=args.num_clients,
             round_num=r,
             ipc=args.ipc,
             method=args.method,
