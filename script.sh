@@ -88,8 +88,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --num_clients $NUM_USERS \
         --alpha $ALPHA_DIRICHLET \
         --honesty_ratio $HONESTY_RATIO \
-        --partition_dir "$PARTITION_DIR" \
-        --save_dir "$MODEL_BASE_DIR"
+        --partition_dir "$PARTITION_DIR"
 
     status_fedaf=$?
     if [ $status_fedaf -ne 0 ]; then
