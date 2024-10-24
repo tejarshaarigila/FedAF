@@ -33,6 +33,7 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'MNIST', 'CelebA'],
                         help='Dataset to use')
     parser.add_argument('--num_clients', type=int, required=True, help='Number of clients')
+    parser.add_argument('--honesty_ratio', type=float', default='1.0', help='Honesty Ratio')
     parser.add_argument('--num_rounds', type=int, required=True, help='Number of communication rounds')
     parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for data heterogeneity')
     parser.add_argument('--data_path', type=str, default='/home/t914a431/data', help='Path to download/load the dataset')
@@ -74,7 +75,7 @@ def main():
     
     # Save the partitions to the specified directory
     logger.info(f"Saving partitions to directory: {args.save_dir}")
-    save_partitions(client_indices_per_round, save_dir=args.save_dir)
+    save_partitions(client_indices_per_round, os.path.join(args.save_dir, args.dataset, args.model, args.num_clients, args.honesty_ratio))
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
 
 if __name__ == "__main__":
