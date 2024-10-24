@@ -234,7 +234,7 @@ def simulate():
     args = parse_args()
     logger = setup_main_logger(args.log_dir)
     logger.info("FedAF Main Logger Initialized.")
-
+    
     base_dataset = load_data(args.dataset, data_path='/home/t914a431/data', train=True)
     
     if args.dataset == 'CIFAR10':
@@ -253,8 +253,21 @@ def simulate():
         logger.error(f"Unsupported dataset: {args.dataset}")
         return
 
-    if not os.path.exists(args.partition_dir):
-        logger.info("No existing partitions found. Generating new partitions.")
+    # Construct the full partition directory path to match where partitions are saved
+    partition_dir = os.path.join(
+        args.partition_dir,    
+        args.dataset,           
+        args.model,            
+        str(args.num_clients),  
+        str(args.honesty_ratio) 
+    )
+    
+    if not os.path.exists(partition_dir):
+        logger.error(f"Partitions directory {partition_dir} does not exist. Please generate partitions first.")
+        return
+    else:
+        logger.info("Partitions directory found. Loading existing partitions.")
+
         client_indices_per_round = partition_data_unique_rounds(
             dataset=base_dataset,
             num_clients=args.num_clients,
