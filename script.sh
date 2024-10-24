@@ -79,29 +79,7 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "Partition generation completed successfully for NUM_USERS=${NUM_USERS}."
 
     echo "----------------------------------------"
-    echo "Step 2: Running FedAvg"
-    echo "----------------------------------------"
-
-    echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
-    srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG \
-        --dataset $DATASET \
-        --model $MODEL \
-        --num_clients $NUM_USERS \
-        --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO \
-        --partition_dir "$PARTITION_DIR" \
-        --save_dir "$MODEL_BASE_DIR" \
-        --log_dir "/home/t914a431/log/"
-
-    status_fedavg=$?
-    if [ $status_fedavg -ne 0 ]; then
-        echo "Error: FedAvg script failed for NUM_USERS=${NUM_USERS}."
-        exit 1
-    fi
-    echo "FedAvg script completed successfully for NUM_USERS=${NUM_USERS}."
-
-    echo "----------------------------------------"
-    echo "Step 3: Running FedAF"
+    echo "Step 2: Running FedAF"
     echo "----------------------------------------"
 
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
@@ -121,6 +99,28 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         exit 1
     fi
     echo "FedAF script completed successfully for NUM_USERS=${NUM_USERS}."
+
+    echo "----------------------------------------"
+    echo "Step 3: Running FedAvg"
+    echo "----------------------------------------"
+
+    echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
+    srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG \
+        --dataset $DATASET \
+        --model $MODEL \
+        --num_clients $NUM_USERS \
+        --alpha $ALPHA_DIRICHLET \
+        --honesty_ratio $HONESTY_RATIO \
+        --partition_dir "$PARTITION_DIR" \
+        --save_dir "$MODEL_BASE_DIR" \
+        --log_dir "/home/t914a431/log/"
+
+    status_fedavg=$?
+    if [ $status_fedavg -ne 0 ]; then
+        echo "Error: FedAvg script failed for NUM_USERS=${NUM_USERS}."
+        exit 1
+    fi
+    echo "FedAvg script completed successfully for NUM_USERS=${NUM_USERS}."
 
     echo "----------------------------------------"
     echo "Step 4: Running Plotting Script"
