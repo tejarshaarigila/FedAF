@@ -67,7 +67,6 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
         --num_clients $NUM_USERS \
         --num_rounds 20 \
         --alpha $ALPHA_DIRICHLET \
-        --honesty_ratio $HONESTY_RATIO \
         --seed 42
 
     status_partition=$?
