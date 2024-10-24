@@ -613,17 +613,26 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
     logger.info("Dataset partitioning across all rounds and clients completed successfully.")
     return client_indices_per_round
 
-def save_partitions(client_indices_per_round, save_dir='partitions_per_round'):
-    """Save partitions for each client for each round."""
-    os.makedirs(save_dir, exist_ok=True)
-    for round_num, client_lists in client_indices_per_round.items():
+def save_partitions(client_indices_per_round, save_dir):
+    """
+    Save the client indices for each round and each client.
+
+    Args:
+        client_indices_per_round (list): A list where each element corresponds to a round and contains a list of lists of client indices.
+        save_dir (str): Directory where partitions are to be saved.
+    """
+    logger = logging.getLogger('GeneratePartitions')
+    for round_num, client_indices in enumerate(client_indices_per_round):
         round_dir = os.path.join(save_dir, f'round_{round_num}')
         os.makedirs(round_dir, exist_ok=True)
-        for client_id, indices in enumerate(client_lists):
+        for client_id, indices in enumerate(client_indices):
             partition_path = os.path.join(round_dir, f'client_{client_id}_partition.pkl')
-            with open(partition_path, 'wb') as f:
-                pickle.dump(indices, f)
-    logger.info(f"All data partitions saved in directory: {save_dir}")
+            try:
+                with open(partition_path, 'wb') as f:
+                    pickle.dump(indices, f)
+                logger.info(f"Saved partition for Client {client_id} in Round {round_num} at {partition_path}")
+            except Exception as e:
+                logger.error(f"Failed to save partition for Client {client_id} in Round {round_num}: {e}")
 
 import os
 import torch
