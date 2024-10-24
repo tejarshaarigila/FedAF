@@ -65,7 +65,6 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     
     python3 utils/generate_partitions.py \
         --dataset $DATASET \
-        --model $MODEL \
         --num_clients $NUM_USERS \
         --num_rounds 20 \
         --alpha $ALPHA_DIRICHLET \
