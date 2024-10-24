@@ -256,7 +256,7 @@ def simulate():
     if not os.path.exists(args.partition_dir):
         logger.error(f"Partitions directory {args.partition_dir} does not exist. Please generate partitions first.")
     else:
-        logger.info("Partitions directory {args.partition_dir} found. Loading existing partitions.")
+        logger.info(f"Partitions directory {args.partition_dir} found. Loading existing partitions.")
         
     # Load partitions
     client_datasets_per_round = load_partitions(
