@@ -5,6 +5,8 @@ from utils import load_data, partition_data_unique_rounds, save_partitions  # Up
 import logging
 import multiprocessing as mp
 import os
+import matplotlib.pyplot as plt  # New import for plotting
+import numpy as np  # New import for numerical operations
 
 def setup_logger():
     """
@@ -43,6 +45,39 @@ def parse_args():
     parser.add_argument('--num_workers', type=int, default=4, help='Number of worker processes for multiprocessing')
     return parser.parse_args()
 
+def plot_data_distribution(client_indices_per_round, save_path, num_clients, num_rounds):
+    """
+    Plots and saves the data distribution across clients for each round.
+
+    Args:
+        client_indices_per_round (list): List containing client indices for each round.
+        save_path (str): Path to save the plot.
+        num_clients (int): Number of clients.
+        num_rounds (int): Number of communication rounds.
+    """
+    # Initialize a numpy array to hold the counts
+    data_counts = np.zeros((num_rounds, num_clients), dtype=int)
+    
+    for round_idx, client_indices in enumerate(client_indices_per_round):
+        for client_idx, indices in enumerate(client_indices):
+            data_counts[round_idx, client_idx] = len(indices)
+    
+    rounds = np.arange(1, num_rounds + 1)
+    
+    plt.figure(figsize=(12, 8))
+    
+    for client in range(num_clients):
+        plt.plot(rounds, data_counts[:, client], label=f'Client {client+1}')
+    
+    plt.xlabel('Communication Rounds')
+    plt.ylabel('Number of Data Samples')
+    plt.title('Data Distribution Across Clients per Round')
+    plt.legend(loc='upper right', bbox_to_anchor=(1.15, 1))
+    plt.tight_layout()
+    
+    plt.savefig(save_path)
+    plt.close()
+
 def main():
     """
     Main function to generate and save dataset partitions.
@@ -75,9 +110,27 @@ def main():
     logger.info("Dataset partitioning completed successfully.")
     
     # Save the partitions to the specified directory
-    logger.info(f"Saving partitions to directory: {args.save_dir}")
-    save_partitions(client_indices_per_round, os.path.join(args.save_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio)))
+    partitions_save_dir = os.path.join(
+        args.save_dir,
+        args.dataset,
+        args.model,
+        str(args.num_clients),
+        str(args.honesty_ratio)
+    )
+    logger.info(f"Saving partitions to directory: {partitions_save_dir}")
+    save_partitions(client_indices_per_round, partitions_save_dir)
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
+    
+    # Generate and save the data distribution graph
+    graph_save_path = os.path.join(partitions_save_dir, 'data_distribution.png')
+    logger.info(f"Generating data distribution graph and saving to: {graph_save_path}")
+    plot_data_distribution(
+        client_indices_per_round=client_indices_per_round,
+        save_path=graph_save_path,
+        num_clients=args.num_clients,
+        num_rounds=args.num_rounds
+    )
+    logger.info("Data distribution graph generated and saved successfully.")
 
 if __name__ == "__main__":
     main()
