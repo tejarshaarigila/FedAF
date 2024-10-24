@@ -76,7 +76,7 @@ def main():
     
     # Save the partitions to the specified directory
     logger.info(f"Saving partitions to directory: {args.save_dir}")
-    save_partitions(client_indices_per_round, os.path.join(args.save_dir, args.dataset, args.model, args.num_clients, args.honesty_ratio))
+    save_partitions(client_indices_per_round, os.path.join(args.save_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio)))
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
 
 if __name__ == "__main__":
