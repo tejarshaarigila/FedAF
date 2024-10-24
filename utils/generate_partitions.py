@@ -34,6 +34,7 @@ def parse_args():
                         help='Dataset to use')
     parser.add_argument('--num_clients', type=int, required=True, help='Number of clients')
     parser.add_argument('--honesty_ratio', type=float, default='1.0', help='Honesty Ratio')
+    parser.add_argument('--model', type=str, default='ConvNet', help='Model')
     parser.add_argument('--num_rounds', type=int, required=True, help='Number of communication rounds')
     parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for data heterogeneity')
     parser.add_argument('--data_path', type=str, default='/home/t914a431/data', help='Path to download/load the dataset')
