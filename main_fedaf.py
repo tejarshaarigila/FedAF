@@ -264,10 +264,6 @@ def simulate():
     
     if not os.path.exists(partition_dir):
         logger.error(f"Partitions directory {partition_dir} does not exist. Please generate partitions first.")
-        return
-    else:
-        logger.info("Partitions directory found. Loading existing partitions.")
-
         client_indices_per_round = partition_data_unique_rounds(
             dataset=base_dataset,
             num_clients=args.num_clients,
@@ -275,7 +271,7 @@ def simulate():
             alpha=args.alpha,
             seed=42
         )
-        save_partitions(client_indices_per_round, save_dir=args.partition_dir)
+        save_partitions(client_indices_per_round, save_dir=partition_dir)
     else:
         logger.info("Partitions directory found. Loading existing partitions.")
 
