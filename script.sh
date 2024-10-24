@@ -9,7 +9,6 @@
 #SBATCH -J federated_exp
 #SBATCH -o slurm-%j.out
 
-# Export environment variables for thread management
 export OMP_NUM_THREADS=1  
 export MKL_NUM_THREADS=1 
 
@@ -26,8 +25,6 @@ HONESTY_RATIO=1.0
 MODEL="ConvNet"
 SAVE_DIR="/home/t914a431/results/"
 PARTITION_BASE_DIR="/home/t914a431/partitions_per_round"
-
-# list of user counts for experiments
 NUM_USERS_LIST=(5 10 15 20)
 
 echo "========================================"
@@ -54,20 +51,16 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "Starting experiments for NUM_USERS=${NUM_USERS}"
     echo "========================================"
 
-    # Define directories specific to the current experiment
     MODEL_BASE_DIR="/home/t914a431/models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
     PARTITION_DIR="${PARTITION_BASE_DIR}/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
 
-    # Create necessary directories
     mkdir -p "$MODEL_BASE_DIR"
     mkdir -p "$PARTITION_DIR"
 
-    # Step 1: Generating Data Partitions
     echo "----------------------------------------"
     echo "Step 1: Generating Data Partitions"
     echo "----------------------------------------"
 
-    # Run generate_partitions.py
     echo "Running Partition Generation: $PYTHON_FILE_PARTITION with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
     srun -n 1 -c 10 python3 $PYTHON_FILE_PARTITION \
         --dataset $DATASET \
@@ -85,12 +78,10 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     fi
     echo "Partition generation completed successfully for NUM_USERS=${NUM_USERS}."
 
-    # Step 2: Running FedAvg
     echo "----------------------------------------"
     echo "Step 2: Running FedAvg"
     echo "----------------------------------------"
 
-    # Run FedAvg
     echo "Running FedAvg: $PYTHON_FILE_FEDAVG with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
     srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG \
         --dataset $DATASET \
@@ -113,7 +104,6 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "Step 3: Running FedAF"
     echo "----------------------------------------"
 
-    # Run FedAF
     echo "Running FedAF: $PYTHON_FILE_FEDAF with ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}, honesty_ratio=${HONESTY_RATIO}"
     srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAF \
         --dataset $DATASET \
@@ -136,7 +126,6 @@ for NUM_USERS in "${NUM_USERS_LIST[@]}"; do
     echo "Step 4: Running Plotting Script"
     echo "----------------------------------------"
 
-    # Run main_plot.py
     echo "Running Plot: $PYTHON_FILE_PLOT for ${DATASET}, ${NUM_USERS} clients, alpha=${ALPHA_DIRICHLET}"
     srun -n 1 -c 10 python3 $PYTHON_FILE_PLOT \
         --dataset $DATASET \
