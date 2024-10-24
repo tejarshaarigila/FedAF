@@ -548,16 +548,6 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
     """
     Partition the dataset into unique, non-overlapping subsets for each client across all rounds,
     ensuring no data is reused in subsequent rounds.
-    
-    Args:
-        dataset (torch.utils.data.Dataset): The dataset to partition.
-        num_clients (int): Number of clients.
-        num_rounds (int): Number of communication rounds.
-        alpha (float): Dirichlet distribution parameter for data heterogeneity.
-        seed (int): Random seed for reproducibility.
-    
-    Returns:
-        dict: A dictionary with keys as round numbers and values as lists of client indices.
     """
     logger = logging.getLogger('Common.Utils')
     np.random.seed(seed)
@@ -576,8 +566,46 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
     # Calculate total number of allocations
     total_allocations = num_rounds * num_clients
 
-    # Initialize client_indices_per_round
-    client_indices_per_round = {round_num: [[] for _ in range(num_clients)] for round_num in range(num_rounds)}
+    # Initialize client_indices_per_round as a list
+    client_indices_per_round = [[] for _ in range(num_rounds)]
+    for round_num in range(num_rounds):
+        client_indices_per_round[round_num] = [[] for _ in range(num_clients)]
+
+    for c in range(num_classes):
+        available_indices = label_indices[c]
+        total_samples = len(available_indices)
+        if total_samples < total_allocations:
+            logger.warning(f"Not enough data for class {c}. Needed: {total_allocations}, Available: {total_samples}")
+            # Optionally, handle this scenario as needed
+            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
+            allocations = allocations.astype(int)
+            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
+        else:
+            # Allocate without exceeding available samples
+            allocations = np.random.dirichlet([alpha] * total_allocations) * total_samples
+            allocations = allocations.astype(int)
+            allocations[-1] = total_samples - allocations[:-1].sum()  # Adjust last allocation
+
+        # Assign allocations to each round and client
+        start = 0
+        for round_num in range(num_rounds):
+            for client_id in range(num_clients):
+                allocation_index = round_num * num_clients + client_id
+                if allocation_index >= len(allocations):
+                    num_samples = 0
+                else:
+                    num_samples = allocations[allocation_index]
+                end = start + num_samples
+                if end > total_samples:
+                    end = total_samples
+                client_indices_per_round[round_num][client_id].extend(available_indices[start:end])
+                start = end
+                if start >= total_samples:
+                    break
+            if start >= total_samples:
+                break
+
+    return client_indices_per_round
 
     for c in range(num_classes):
         available_indices = label_indices[c]
