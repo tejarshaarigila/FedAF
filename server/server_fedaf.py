@@ -59,7 +59,7 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
             soft_labels = rc_smooth  # Aggregated soft labels from clients
             log_probs = nn.functional.log_softmax(outputs / temperature, dim=1)
             aggregated_log_probs = log_probs.mean(dim=0)
-            loss_lgkm = 0.5 * ( criterion_lgkm(aggregated_log_probs, soft_labels) + criterion_lgkm( soft_labels, aggregated_log_probs) )
+            loss_lgkm = 0.5 * (criterion_lgkm(aggregated_log_probs, soft_labels) + criterion_lgkm(soft_labels, aggregated_log_probs))
 
             # Combine the losses
             combined_loss = loss_ce + lambda_glob * loss_lgkm
