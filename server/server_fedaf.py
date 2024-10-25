@@ -246,64 +246,20 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
         else:
             logger.warning(f"Server: No synthetic data found from Client {client_id} at {synthetic_data_filename}. Skipping.")
         
-    # Ensure that aggregated data is available for training
+    # Remove data augmentation and use the aggregated data as-is
     if not all_images:
         logger.error("Server: No synthetic data aggregated from any client. Skipping model update for this round.")
-        # Initialize aggregated logits with zeros
-        aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-        return aggregated_logits
+        return
     
     # Concatenate all synthetic data
     all_images = torch.cat(all_images, dim=0)
     all_labels = torch.cat(all_labels, dim=0)
-    logger.info(f"Server: Aggregated {all_images.size(0)} synthetic images from {len(all_images)} clients.")
-
-    # Handle class imbalance by augmenting underrepresented classes
-    max_class_count = int(class_counts.max().item())
-    balanced_images = []
-    balanced_labels = []
+    logger.info(f"Server: Aggregated {all_images.size(0)} synthetic images from {num_clients_data} clients.")
     
-    for c in range(num_classes):
-        class_indices = (all_labels == c).nonzero(as_tuple=True)[0]
-        class_images = all_images[class_indices]
-        class_labels = all_labels[class_indices]
-
-        if class_indices.numel() == 0:
-            logger.warning(f"Server: No synthetic images for class {c}. Initializing with random noise.")
-            # Initialize with random noise
-            noise = torch.randn(ipc, channel, *im_size, device=device)
-            balanced_images.append(noise)
-            balanced_labels.extend([c] * ipc)
-            continue
-
-        if class_indices.numel() < max_class_count:
-            # Perform data augmentation to match max_class_count
-            augmentation_factor = (max_class_count // class_indices.numel()) - 1
-            if augmentation_factor > 0:
-                augmented_images = augment_data(class_images, augmentation_factor=augmentation_factor)
-                augmented_labels = torch.full((augmented_images.size(0),), c, device=device, dtype=torch.long)
-                class_images = torch.cat([class_images, augmented_images], dim=0)
-                class_labels = torch.cat([class_labels, augmented_labels], dim=0)
-                logger.info(f"Server: Augmented class {c} synthetic images by a factor of {augmentation_factor}.")
-        
-        # Ensure exactly max_class_count samples per class
-        if class_images.size(0) > max_class_count:
-            class_images = class_images[:max_class_count]
-            class_labels = class_labels[:max_class_count]
-        elif class_images.size(0) < max_class_count:
-            # Pad with random noise if still less than max_class_count
-            padding = max_class_count - class_images.size(0)
-            noise = torch.randn(padding, channel, *im_size, device=device)
-            class_images = torch.cat([class_images, noise], dim=0)
-            class_labels = torch.cat([class_labels, torch.full((padding,), c, device=device, dtype=torch.long)], dim=0)
-            logger.warning(f"Server: Padded class {c} synthetic images with {padding} random noise samples.")
-
-        balanced_images.append(class_images)
-        balanced_labels.append(class_labels)
-    
-    balanced_images = torch.cat(balanced_images, dim=0)
-    balanced_labels = torch.cat(balanced_labels, dim=0)
-    logger.info(f"Server: Balanced synthetic dataset with {balanced_images.size(0)} images.")
+    # Proceed to create the DataLoader and train the model
+    final_dataset = TensorDataset(all_images, all_labels)
+    train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
+    logger.info("Server: Created DataLoader for training without data augmentation.")
 
     # Create training dataset and loader
     final_dataset = TensorDataset(balanced_images, balanced_labels)
