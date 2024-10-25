@@ -215,11 +215,6 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
     logger.info("Server: Created DataLoader for training without data augmentation.")
 
-    # Create training dataset and loader
-    final_dataset = TensorDataset(balanced_images, balanced_labels)
-    train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
-    logger.info("Server: Created DataLoader for training.")
-
     # Load the latest global model
     logger.info("Server: Loading the latest global model.")
     global_model = load_latest_model(
