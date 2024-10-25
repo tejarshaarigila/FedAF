@@ -218,25 +218,24 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     all_images = []
     all_labels = []
     class_counts = torch.zeros(num_classes, device=device)
-
-    # Adjusted code to load synthetic data from clients
+    
     logger.info("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
             '/home/t914a431/result',
             f'Client_{client_id}',
-            f'res_DM_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
+            f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
-
+    
         if os.path.exists(synthetic_data_filename):
             try:
                 data_dict = torch.load(synthetic_data_filename, map_location=device)
-                if 'data' in data_dict and 'labels' in data_dict and data_dict['data'].size(0) > 0:
+                if 'images' in data_dict and 'labels' in data_dict and data_dict['images'].size(0) > 0:
                     logger.info(f"Server: Loaded synthetic data from Client {client_id} at {synthetic_data_filename}.")
-                    images, labels = data_dict['data'], data_dict['labels']
+                    images, labels = data_dict['images'], data_dict['labels']
                     all_images.append(images)
                     all_labels.append(labels)
-
+    
                     # Update class counts
                     for label in labels:
                         class_counts[label] += 1
@@ -246,7 +245,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
                 logger.error(f"Server: Error loading data from Client {client_id} - {e}")
         else:
             logger.warning(f"Server: No synthetic data found from Client {client_id} at {synthetic_data_filename}. Skipping.")
-    
+        
     # Ensure that aggregated data is available for training
     if not all_images:
         logger.error("Server: No synthetic data aggregated from any client. Skipping model update for this round.")
