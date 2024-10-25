@@ -10,35 +10,6 @@ import torch.optim as optim
 from torchvision.utils import save_image
 import logging
 
-def augment_data(images, augmentation_factor=2):
-    """
-    Applies data augmentation to the given set of images, considering their input dimensions.
-
-    Args:
-        images (torch.Tensor): The images to augment (shape: [N, C, H, W]).
-        augmentation_factor (int): Number of times to augment each image.
-
-    Returns:
-        torch.Tensor: Augmented images.
-    """
-    _, _, height, width = images.shape  # Extract height and width from the input images
-
-    transform = transforms.Compose([
-        transforms.RandomCrop((height, width)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(degrees=15),
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1)
-    ])
-    
-    augmented_images = []
-    for _ in range(augmentation_factor):
-        for img in images:
-            augmented_img = transform(img.cpu())
-            augmented_images.append(augmented_img)
-
-    return torch.stack(augmented_images).to(images.device)
-
 def ensure_directory_exists(path):
     """
     Ensures that the directory exists; if not, creates it.
@@ -48,22 +19,6 @@ def ensure_directory_exists(path):
     """
     if not os.path.exists(path):
         os.makedirs(path)
-
-def dynamic_lambda_glob_client(epoch, total_epochs, min_lambda=0.5, max_lambda=1.0):
-    """
-    Dynamically adjusts lambda_glob based on the current epoch.
-
-    Args:
-        epoch (int): Current epoch number.
-        total_epochs (int): Total number of epochs.
-        min_lambda (float): Minimum lambda value.
-        max_lambda (float): Maximum lambda value.
-
-    Returns:
-        float: Adjusted lambda_glob value.
-    """
-    lambda_glob = min_lambda + (max_lambda - min_lambda) * (epoch / total_epochs)
-    return lambda_glob
 
 def train_model(model, train_loader, rc_tensor, num_classes, temperature, device, num_epochs, lambda_glob):
     """
@@ -87,12 +42,11 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
     epsilon = 1e-6
     rc_smooth = rc_tensor + epsilon  # Smooth rc_tensor to avoid log(0)
 
+    current_lambda_glob = lambda_glob
+
     for epoch in range(num_epochs):
         running_loss = 0.0
-
-        # Compute dynamic lambda_glob
-        current_lambda_glob = dynamic_lambda_glob_client(epoch, num_epochs)
-
+        
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
 
