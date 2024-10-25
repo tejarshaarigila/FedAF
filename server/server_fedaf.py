@@ -208,7 +208,6 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     # Concatenate all synthetic data
     all_images = torch.cat(all_images, dim=0)
     all_labels = torch.cat(all_labels, dim=0)
-    logger.info(f"Server: Aggregated {all_images.size(0)} synthetic images from {num_clients_data} clients.")
     
     # Proceed to create the DataLoader and train the model
     final_dataset = TensorDataset(all_images, all_labels)
