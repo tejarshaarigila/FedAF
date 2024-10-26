@@ -157,6 +157,33 @@ def data_condensation_worker(args_tuple):
         logger = logging.getLogger('FedAF.Main')
         logger.exception(f"Client {client_id}: Error during data condensation - {e}")
         return False  # Indicate failure during condensation
+        
+def calculate_and_save_rk_worker(args_tuple):
+    """
+    Worker function for calculating and saving Rk (class-wise soft labels) for Local-Global Knowledge Matching.
+
+    Args:
+        args_tuple (tuple): Tuple containing (client_id, train_data, args_dict, round_num).
+
+    Returns:
+        str or None: Path to the saved Rk, or None if an error occurred.
+    """
+    client_id, train_data, args_dict, round_num = args_tuple
+    try:
+        # Initialize Client
+        client = Client(client_id, train_data, args_dict)
+        client.calculate_and_save_rk(round_num)
+
+        # Log when client completes calculating Rk
+        logger = logging.getLogger('FedAF.Main')
+        logger.info(f"Client {client_id} has completed calculating and saving Rk for round {round_num}.")
+
+        # Return the round Rk path
+        return client.round_rk_path
+    except Exception as e:
+        logger = logging.getLogger('FedAF.Main')
+        logger.exception(f"Exception in client {client_id} during Rk calculation: {e}")
+        return None
 
 def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str = "cpu") -> torch.Tensor:
     """
@@ -282,7 +309,7 @@ def simulate():
         
         rc_tensor = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
         save_aggregated_logits(rc_tensor, args, r, 'V', logger)
-        
+
         # Step 3: Collect Rk from clients
         with multiprocessing.Pool(processes=args.num_clients) as pool:
             rk_paths = pool.map(calculate_and_save_rk_worker, client_args)
