@@ -724,9 +724,9 @@ def compute_swd(logits1, logits2, num_projections=100):
     distances = [wasserstein_distance([projected_logits1[i]], [projected_logits2[i]]) for i in range(num_projections)]
     return np.mean(distances)
 
-def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc, temperature):
+def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc, temperature, logit_type='V'):
     """
-    Calculates and saves class-wise averaged logits (V(k,c)) and probabilities (R(k,c)).
+    Calculates and saves class-wise averaged logits (Vkc or Rkc).
 
     Args:
         model_net (torch.nn.Module): The global model.
@@ -736,12 +736,19 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
         path (str): Directory path to save logits.
         ipc (int): Instances per class.
         temperature (float): Temperature parameter for softmax.
+        logit_type (str): Type of logits to calculate ('V' or 'R').
+
+    Raises:
+        ValueError: If `logit_type` is neither 'V' nor 'R'.
     """
+    if logit_type not in ['V', 'R']:
+        logger.error(f"Invalid logit_type '{logit_type}'. Must be 'V' or 'R'.")
+        raise ValueError(f"Invalid logit_type '{logit_type}'. Must be 'V' or 'R'.")
+
     os.makedirs(path, exist_ok=True)
     dataloader = DataLoader(partition, batch_size=256, shuffle=False)
 
     logits_by_class = [[] for _ in range(num_classes)]
-    probs_by_class = [[] for _ in range(num_classes)]
 
     model_net.eval()
     with torch.no_grad():
@@ -749,39 +756,40 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
             images = images.to(device)
             labels = labels.to(device)
             logits = model_net(images)
-            probs = F.softmax(logits / temperature, dim=1)
-            for i in range(labels.size(0)):
-                label = labels[i].item()
-                if 0 <= label < num_classes:
-                    logits_by_class[label].append(logits[i].unsqueeze(0))
-                    probs_by_class[label].append(probs[i].unsqueeze(0))
-                else:
-                    logger.warning(f"Label {label} is out of range. Skipping.")
+            if logit_type == 'R':
+                probs = F.softmax(logits / temperature, dim=1)
+                for i in range(labels.size(0)):
+                    label = labels[i].item()
+                    if 0 <= label < num_classes:
+                        logits_by_class[label].append(probs[i].unsqueeze(0))
+                    else:
+                        logger.warning(f"Label {label} is out of range. Skipping.")
+            elif logit_type == 'V':
+                for i in range(labels.size(0)):
+                    label = labels[i].item()
+                    if 0 <= label < num_classes:
+                        logits_by_class[label].append(logits[i].unsqueeze(0))
+                    else:
+                        logger.warning(f"Label {label} is out of range. Skipping.")
 
     logits_avg = []
-    probs_avg = []
     for c in range(num_classes):
         if len(logits_by_class[c]) >= ipc:
             class_logits = torch.cat(logits_by_class[c], dim=0)
-            class_probs = torch.cat(probs_by_class[c], dim=0)
             avg_logit = class_logits.mean(dim=0)
-            avg_prob = class_probs.mean(dim=0)
         else:
             avg_logit = torch.zeros(num_classes, device=device)
-            avg_prob = torch.zeros(num_classes, device=device)
             logger.warning(f"Not enough instances for class {c}. Initialized with zeros.")
         logits_avg.append(avg_logit)
-        probs_avg.append(avg_prob)
 
-    # Save the averaged logits and probabilities
+    # Save the averaged logits
     try:
         for c in range(num_classes):
-            torch.save(logits_avg[c], os.path.join(path, f'Vkc_{c}.pt'))
-            torch.save(probs_avg[c], os.path.join(path, f'Rkc_{c}.pt'))
-        logger.info(f"Saved averaged logits and probabilities to {path}.")
+            filename = f'{logit_type}kc_{c}.pt'
+            torch.save(logits_avg[c], os.path.join(path, filename))
+        logger.info(f"Saved averaged logits ({logit_type}kc) to {path}.")
     except Exception as e:
-        logger.error(f"Error saving logits and probabilities: {e}")
-
+        logger.error(f"Error saving {logit_type}kc logits: {e}")
 
 def load_latest_model(model_dir, model_name, channel, num_classes, im_size, device):
     """
