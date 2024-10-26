@@ -158,9 +158,9 @@ def data_condensation_worker(args_tuple):
         logger.exception(f"Client {client_id}: Error during data condensation - {e}")
         return False  # Indicate failure during condensation
 
-def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str = "cpu") -> list:
+def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str = "cpu") -> torch.Tensor:
     """
-    Aggregates class-wise logits from all clients using their logit directories.
+    Aggregates class-wise logits from all clients and returns a tensor.
 
     Args:
         logit_dirs (list): List of logit directory paths from clients.
@@ -169,44 +169,25 @@ def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str =
         device (str): Device to use for tensor operations ('cpu' or 'cuda').
 
     Returns:
-        list: Aggregated logits per class.
+        torch.Tensor: Aggregated logits per class as a tensor [num_classes, num_classes].
     """
-    aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-    class_counts = [0] * num_classes  # To track non-zero logits count
+    aggregated_logits = torch.zeros((num_classes, num_classes), device=device)
+    class_counts = torch.zeros(num_classes, device=device)
 
     for logit_dir in logit_dirs:
-        if not os.path.exists(logit_dir):
-            logger = logging.getLogger('FedAF.Main')
-            logger.warning(f"Logit directory {logit_dir} does not exist. Skipping.")
-            continue
-        try:
-            # Iterate over each class's logit file
-            for c in range(num_classes):
-                logit_file = os.path.join(logit_dir, f'Vkc_{c}.pt') if v_r == 'V' else os.path.join(logit_dir, f'Rkc_{c}.pt')
-                if os.path.isfile(logit_file):
-                    client_logit = torch.load(logit_file, map_location=device)
-                    if client_logit.sum().item() > 0:
-                        aggregated_logits[c] += client_logit
-                        class_counts[c] += 1
-                    else:
-                        continue
-                else:
-                    logger = logging.getLogger('FedAF.Main')
-                    logger.warning(f"Logit file {logit_file} does not exist. Skipping.")
-        except Exception as e:
-            logger = logging.getLogger('FedAF.Main')
-            logger.error(f"Error loading logits from directory {logit_dir}: {e}")
-            continue
+        for c in range(num_classes):
+            logit_file = os.path.join(logit_dir, f'Vkc_{c}.pt') if v_r == 'V' else os.path.join(logit_dir, f'Rkc_{c}.pt')
+            if os.path.isfile(logit_file):
+                client_logit = torch.load(logit_file, map_location=device)
+                if client_logit.sum().item() > 0:
+                    aggregated_logits[c] += client_logit
+                    class_counts[c] += 1
 
     for c in range(num_classes):
         if class_counts[c] > 0:
             aggregated_logits[c] /= class_counts[c]
-            logger = logging.getLogger('FedAF.Main')
-            logger.info(f"Aggregated logits for class {c} from {class_counts[c]} clients.")
         else:
-            logger = logging.getLogger('FedAF.Main')
-            logger.warning(f"No valid logits for class {c} from any client. Initializing aggregated logits with zeros.")
-            aggregated_logits[c] = torch.zeros(num_classes, device=device)
+            logger.warning(f"No valid logits for class {c}. Initializing with zeros.")
 
     return aggregated_logits
 
@@ -286,30 +267,34 @@ def simulate():
         current_round = r - 1  # Zero-based indexing
         client_datasets = client_datasets_per_round[current_round]
 
-        # Step 1: Clients calculate and save their class-wise logits
-        client_args = [
-            (client_id, client_datasets[client_id], vars(args), r)
-            for client_id in range(args.num_clients)
-        ]
-
+        # Step 1: Clients calculate and save their class-wise logits and Rk
         with multiprocessing.Pool(processes=args.num_clients) as pool:
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
-
-        logger.info("Clients have completed calculating and saving logits.")
-
-        # Step 2: Aggregate logits from available clients
+        
+        logger.info("Clients have completed calculating and saving logits and Rk.")
+        
+        # Step 2: Aggregate V logits to form rc_tensor
         valid_logit_paths = [path for path in logit_paths if path is not None]
         if not valid_logit_paths:
             logger.error(f"No valid logits were calculated by any client in round {r}. Skipping round.")
             logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
-            continue  # Skip the rest of the round if no logits are available
-
-        aggregated_logits = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
-        save_aggregated_logits(aggregated_logits, args, r, 'V', logger)
-
-        # Step 3: Clients perform Data Condensation on synthetic data S
+            continue  # Skip if no logits available
+        
+        rc_tensor = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
+        save_aggregated_logits(rc_tensor, args, r, 'V', logger)
+        
+        # Step 3: Collect Rk from clients
         with multiprocessing.Pool(processes=args.num_clients) as pool:
-            condensation_status = pool.map(data_condensation_worker, client_args)
+            rk_paths = pool.map(calculate_and_save_rk_worker, client_args)
+        
+        valid_rk_paths = [path for path in rk_paths if path is not None]
+        if not valid_rk_paths:
+            logger.error(f"No valid Rk were received from any client in round {r}. Skipping LGKM.")
+            logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
+            continue
+        
+        # Aggregate Rk to form R
+        R_tensor = aggregate_logits(valid_rk_paths, args.num_classes, 'R', device=args.device)
 
         # Step 4: Identify clients that succeeded in data condensation
         successful_clients = [client_id for client_id, status in zip(range(args.num_clients), condensation_status) if status]
