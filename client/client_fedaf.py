@@ -138,7 +138,8 @@ class Client:
                 device=self.device,
                 path=round_rk_path,
                 ipc=self.ipc,
-                temperature=self.temperature
+                temperature=self.temperature,
+                logit_type='R'
             )
             self.logger.info(f"Client {self.client_id}: Rk calculated and saved.")
             self.round_rk_path = round_rk_path
