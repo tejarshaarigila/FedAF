@@ -115,6 +115,36 @@ class Client:
         # Set normalization parameters based on dataset
         self.mean, self.std = self.set_normalization_parameters()
 
+    def calculate_and_save_rk(self, round_num: int):
+        """
+        Calculates class-wise soft labels Rk for Local-Global Knowledge Matching and saves them.
+
+        Args:
+            round_num (int): Current round number.
+        """
+        round_rk_path = os.path.join(
+            self.logit_path,
+            f'Round_{round_num}'
+        )
+        os.makedirs(round_rk_path, exist_ok=True)
+
+        self.logger.info(f"Client {self.client_id}: Calculating and saving Rk for round {round_num}.")
+
+        try:
+            calculate_logits_labels(
+                model_net=self.model,
+                partition=self.data_partition,
+                num_classes=self.num_classes,
+                device=self.device,
+                path=round_rk_path,
+                ipc=self.ipc,
+                temperature=self.temperature
+            )
+            self.logger.info(f"Client {self.client_id}: Rk calculated and saved.")
+            self.round_rk_path = round_rk_path
+        except Exception as e:
+            self.logger.error(f"Client {self.client_id}: Error calculating and saving Rk - {e}")
+
     def has_no_data(self) -> bool:
         """
         Checks if the client has no data at all or fewer than ipc real images for all classes.
