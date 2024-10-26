@@ -9,7 +9,7 @@ import argparse
 import multiprocessing
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils import load_data, partition_data_unique_rounds, load_partitions, get_network, plot_accuracies, save_partitions
+from utils.utils import load_data, load_partitions, get_network, plot_accuracies, save_partitions, ensure_directory_exists
 from torch.utils.data import Subset
 
 def setup_main_logger(log_dir):
@@ -88,7 +88,7 @@ def initialize_global_model(args, logger):
     """
     model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
     model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio))
-    os.makedirs(model_dir, exist_ok=True)
+    ensure_directory_exists(model_dir)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
     logger.info(f"Global model initialized and saved to {model_path}.")
@@ -148,16 +148,20 @@ def data_condensation_worker(args_tuple):
         client.initialize_synthetic_data(round_num)
 
         logger.info(f"Client {client_id}: Training synthetic data for round {round_num}.")
-        client.train_synthetic_data(round_num)
+        condensation_success = client.train_synthetic_data(round_num)
 
-        logger.info(f"Client {client_id}: Data condensation completed successfully for round {round_num}.")
-        return True  # Indicate that condensation succeeded
+        if condensation_success:
+            logger.info(f"Client {client_id}: Data condensation completed successfully for round {round_num}.")
+            return True  # Indicate that condensation succeeded
+        else:
+            logger.warning(f"Client {client_id}: Data condensation failed for round {round_num}.")
+            return False  # Indicate that condensation failed
 
     except Exception as e:
         logger = logging.getLogger('FedAF.Main')
         logger.exception(f"Client {client_id}: Error during data condensation - {e}")
         return False  # Indicate failure during condensation
-        
+
 def calculate_and_save_rk_worker(args_tuple):
     """
     Worker function for calculating and saving Rk (class-wise soft labels) for Local-Global Knowledge Matching.
@@ -178,7 +182,7 @@ def calculate_and_save_rk_worker(args_tuple):
         logger = logging.getLogger('FedAF.Main')
         logger.info(f"Client {client_id} has completed calculating and saving Rk for round {round_num}.")
 
-        # Return the round Rk path
+        # Return the round_rk_path
         return client.round_rk_path
     except Exception as e:
         logger = logging.getLogger('FedAF.Main')
@@ -196,46 +200,56 @@ def aggregate_logits(logit_dirs: list, num_classes: int, v_r: str, device: str =
         device (str): Device to use for tensor operations ('cpu' or 'cuda').
 
     Returns:
-        torch.Tensor: Aggregated logits per class as a tensor [num_classes, num_classes].
+        torch.Tensor: Aggregated logits per class as a tensor [num_classes].
     """
-    aggregated_logits = torch.zeros((num_classes, num_classes), device=device)
-    class_counts = torch.zeros(num_classes, device=device)
+    aggregated_logits = torch.zeros(num_classes, device=device)  # Shape: [10]
+    class_counts = torch.zeros(num_classes, device=device)       # Shape: [10]
 
     for logit_dir in logit_dirs:
         for c in range(num_classes):
             logit_file = os.path.join(logit_dir, f'Vkc_{c}.pt') if v_r == 'V' else os.path.join(logit_dir, f'Rkc_{c}.pt')
             if os.path.isfile(logit_file):
-                client_logit = torch.load(logit_file, map_location=device)
-                if client_logit.sum().item() > 0:
-                    aggregated_logits[c] += client_logit
-                    class_counts[c] += 1
+                try:
+                    client_logit = torch.load(logit_file, map_location=device)
+                    if client_logit.numel() > 0:
+                        aggregated_logits[c] += client_logit
+                        class_counts[c] += 1
+                except Exception as e:
+                    logger = logging.getLogger('FedAF.Main')
+                    logger.error(f"Error loading {v_r}kc file for class {c} from {logit_dir}: {e}")
+            else:
+                logger = logging.getLogger('FedAF.Main')
+                logger.warning(f"No {v_r}kc file for class {c} in {logit_dir}. Skipping.")
 
     for c in range(num_classes):
         if class_counts[c] > 0:
             aggregated_logits[c] /= class_counts[c]
         else:
-            logger.warning(f"No valid logits for class {c}. Initializing with zeros.")
+            logger = logging.getLogger('FedAF.Main')
+            logger.warning(f"No valid {v_r}kc logits for class {c}. Initializing with zero.")
+            aggregated_logits[c] = 0.0  # Ensuring no NaNs
 
-    return aggregated_logits
+    return aggregated_logits  # Shape: [10]
 
-def save_aggregated_logits(aggregated_logits: list, args, round_num: int, v_r: str, logger):
+def save_aggregated_logits(aggregated_logits: torch.Tensor, args, round_num: int, v_r: str, logger):
     """
     Saves the aggregated logits to a global directory accessible by all clients.
 
     Args:
-        aggregated_logits (list): Aggregated logits per class.
+        aggregated_logits (torch.Tensor): Aggregated logits per class [10].
         args (Namespace): Parsed arguments.
         round_num (int): Current round number.
         v_r (str): Indicator for the type of logits ('V' or 'R').
         logger (logging.Logger): Logger instance.
     """
     logits_dir = os.path.join(args.logits_dir, 'Global')
-    os.makedirs(logits_dir, exist_ok=True)
-    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}c.pt')
+    ensure_directory_exists(logits_dir)
+    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}.pt')
     try:
         torch.save(aggregated_logits, global_logits_path)
         logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
     except Exception as e:
+        logger = logging.getLogger('FedAF.Main')
         logger.error(f"Server: Error saving aggregated logits to {global_logits_path} - {e}")
 
 def simulate():
@@ -263,9 +277,10 @@ def simulate():
     
     if not os.path.exists(args.partition_dir):
         logger.error(f"Partitions directory {args.partition_dir} does not exist. Please generate partitions first.")
+        return  # Exit if partitions do not exist
     else:
         logger.info(f"Partitions directory {args.partition_dir} found. Loading existing partitions.")
-        
+    
     # Load partitions
     client_datasets_per_round = load_partitions(
         dataset=base_dataset,
@@ -281,8 +296,10 @@ def simulate():
     model_dir = os.path.join(args.models_dir, args.dataset, args.model, str(args.num_clients), str(args.honesty_ratio))
     global_model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     if not os.path.exists(global_model_path):
-        logger.info("[+] Initializing Global Model")
-        initialize_global_model(args, logger)
+        logger.info("[+] Initializing Global Model for Round 0")
+        initialize_global_model(args, logger)  # This function saves 'fedaf_global_model_0.pth'
+    else:
+        logger.info("Global model for Round 0 already exists. Skipping initialization.")
 
     test_accuracies = []
 
@@ -294,50 +311,59 @@ def simulate():
         current_round = r - 1  # Zero-based indexing
         client_datasets = client_datasets_per_round[current_round]
 
-        # Step 1: Clients calculate and save their class-wise logits and Rk
+        # Define client_args for multiprocessing
+        client_args = [
+            (client_id, client_datasets[client_id], vars(args), r) 
+            for client_id in range(args.num_clients)
+        ]
+
+        # Step 1: Clients calculate and save their Vkc
         with multiprocessing.Pool(processes=args.num_clients) as pool:
             logit_paths = pool.map(calculate_and_save_logits_worker, client_args)
         
-        logger.info("Clients have completed calculating and saving logits and Rk.")
-        
-        # Step 2: Aggregate V logits to form rc_tensor
-        valid_logit_paths = [path for path in logit_paths if path is not None]
-        if not valid_logit_paths:
-            logger.error(f"No valid logits were calculated by any client in round {r}. Skipping round.")
+        logger.info("Clients have completed calculating and saving Vkc.")
+
+        # Step 2: Server aggregates Vkc into Rc_tensor
+        valid_vkc_paths = [path for path in logit_paths if path is not None]
+        if not valid_vkc_paths:
+            logger.error(f"No valid Vkc were calculated by any client in round {r}. Skipping round.")
+            test_accuracies.append(None)  # Mark skipped round
             logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
             continue  # Skip if no logits available
         
-        rc_tensor = aggregate_logits(valid_logit_paths, args.num_classes, 'V', device=args.device)
+        rc_tensor = aggregate_logits(valid_vkc_paths, args.num_classes, 'V', device=args.device)  # Shape: [10]
         save_aggregated_logits(rc_tensor, args, r, 'V', logger)
 
-        # Step 3: Collect Rk from clients
+        # Step 3: Clients perform data condensation using Rc_tensor and Uk
+        with multiprocessing.Pool(processes=args.num_clients) as pool:
+            condensation_status = pool.map(data_condensation_worker, client_args)
+        
+        # Log which clients succeeded or failed in condensation
+        for client_id, status in enumerate(condensation_status):
+            if status:
+                logger.info(f"Client {client_id}: Data condensation succeeded for round {r}.")
+            else:
+                logger.info(f"Client {client_id}: Data condensation skipped or failed for round {r}.")
+
+        # Step 4: Clients calculate and save Rk
         with multiprocessing.Pool(processes=args.num_clients) as pool:
             rk_paths = pool.map(calculate_and_save_rk_worker, client_args)
         
         valid_rk_paths = [path for path in rk_paths if path is not None]
         if not valid_rk_paths:
-            logger.error(f"No valid Rk were received from any client in round {r}. Skipping LGKM.")
+            logger.error(f"No valid Rk were received from any client in round {r}. Skipping LGKM and model update.")
+            test_accuracies.append(None)  # Mark skipped round
             logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
-            continue
-        
-        # Aggregate Rk to form R
-        R_tensor = aggregate_logits(valid_rk_paths, args.num_classes, 'R', device=args.device)
+            continue  # Skip model update
 
-        # Step 4: Identify clients that succeeded in data condensation
-        successful_clients = [client_id for client_id, status in zip(range(args.num_clients), condensation_status) if status]
-        if not successful_clients:
-            logger.error(f"No clients succeeded in data condensation in round {r}. Skipping server update.")
-            logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
-            continue  # Skip the server update if no clients succeeded
+        logger.info("Clients have completed calculating and saving Rk.")
 
-        # Prepare logit paths for successful clients
-        successful_logit_paths = [logit_paths[client_id] for client_id in successful_clients]
+        # Step 5: Server aggregates Rk into Rc_tensor
+        rc_tensor_r = aggregate_logits(valid_rk_paths, args.num_classes, 'R', device=args.device)  # Shape: [10]
+        save_aggregated_logits(rc_tensor_r, args, r, 'R', logger)
+        logger.info("Server has aggregated Rk into Rc_tensor.")
 
-        # Step 5: Aggregate logits for labels ('R') from successful clients
-        aggregated_labels = aggregate_logits(successful_logit_paths, args.num_classes, 'R', device=args.device)
-        save_aggregated_logits(aggregated_labels, args, r, 'R', logger)
-
-        # Step 6: Server updates the global model using aggregated soft labels R & synthetic data S
+        # Step 6: Server trains global model and evaluates
         server_accuracy = server_update(
             model_name=args.model,
             data=args.dataset,
@@ -354,7 +380,10 @@ def simulate():
             logger=logger
         )
 
-        test_accuracies.append(server_accuracy)
+        if server_accuracy is not None:
+            test_accuracies.append(server_accuracy)
+        else:
+            test_accuracies.append(None)  # Mark skipped rounds
 
         logger.info(f"--- Round Ended: {r}/{args.rounds}  ---")
 
