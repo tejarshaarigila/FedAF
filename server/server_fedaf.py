@@ -5,42 +5,35 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torchvision import datasets, transforms
-from utils.utils_fedaf import load_latest_model, compute_swd
+from utils.utils import load_latest_model, compute_swd, ensure_directory_exists
 import torch.optim as optim
 from torchvision.utils import save_image
 import logging
 
-def ensure_directory_exists(path):
-    """
-    Ensures that the directory exists; if not, creates it.
-
-    Args:
-        path (str): Directory path to check and create.
-    """
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-def train_model(model, train_loader, rc_tensor, num_classes, temperature, device, num_epochs, lambda_glob):
+def train_model(model, train_loader, rc_tensor, num_classes, temperature, device, num_epochs, lambda_glob, logger):
     """
     Trains the model using the provided training data loader, including LGKM loss.
 
     Args:
         model (torch.nn.Module): The global model to train.
         train_loader (DataLoader): DataLoader for training data.
-        rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
+        rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients [10].
         num_classes (int): Number of classes.
         temperature (float): Temperature parameter for softmax scaling.
         device (torch.device): Device to train on.
         num_epochs (int): Number of training epochs.
         lambda_glob (float): Weight for the LGKM loss.
+        logger (logging.Logger): Logger instance.
     """
     model.train()  # Set the model to training mode
-    criterion_ce = nn.CrossEntropyLoss()  # Define the Cross-Entropy loss function
-    criterion_lgkm = nn.KLDivLoss(reduction='batchmean')  # Define the KL Divergence loss for LGKM
-    optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
+    criterion_ce = nn.CrossEntropyLoss() 
+    criterion_lgkm = nn.KLDivLoss(reduction='batchmean')
+    optimizer = optim.SGD(model.parameters(), lr=0.001)
 
+    # Ensure rc_tensor is a valid probability distribution
     epsilon = 1e-6
-    rc_smooth = rc_tensor + epsilon  # Smooth rc_tensor to avoid log(0)
+    rc_smooth = rc_tensor + epsilon
+    rc_smooth = rc_smooth / rc_smooth.sum()
 
     current_lambda_glob = lambda_glob
 
@@ -55,28 +48,28 @@ def train_model(model, train_loader, rc_tensor, num_classes, temperature, device
             outputs = model(inputs)  # Forward pass
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
 
-            # Compute LGKM loss
-            soft_labels = rc_smooth  # Aggregated soft labels from clients
-            log_probs = nn.functional.log_softmax(outputs / temperature, dim=1)
-            aggregated_log_probs = log_probs.mean(dim=0)
-            
-            kl_div1 = torch.sum(soft_labels * (torch.log(soft_labels) - aggregated_log_probs))
-            kl_div2 = torch.sum(aggregated_log_probs * (aggregated_log_probs - torch.log(soft_labels)))
+            # Softmax probabilities with temperature scaling
+            log_probs = nn.functional.log_softmax(outputs / temperature, dim=1)  # Shape: [batch_size, 10]
 
-            loss_lgkm = 0.5 * (kl_div1 + kl_div2)
+            # Expand rc_smooth to match batch size
+            Rc_target = rc_smooth.unsqueeze(0).repeat(labels.size(0), 1)  # Shape: [batch_size, 10]
 
-            # Combine the losses
-            combined_loss = loss_ce + lambda_glob * loss_lgkm
+            # Compute KL Divergence Loss
+            loss_lgkm = criterion_lgkm(log_probs, Rc_target)
 
-            combined_loss.backward()  # Backward pass
-            optimizer.step()  # Update model parameters
+            # Total Loss
+            loss = loss_ce + lambda_glob * loss_lgkm
 
-            running_loss += combined_loss.item()
+            # Backward and optimize
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
 
         avg_epoch_loss = running_loss / len(train_loader)
-        print(f'Server: Epoch {epoch + 1}/{num_epochs}, Loss: {avg_epoch_loss:.4f} (CE: {loss_ce.item():.4f}, LGKM: {loss_lgkm.item():.4f}, Lambda: {current_lambda_glob:.4f})')
+        logger.info(f'Server: Epoch [{epoch +1}/{num_epochs}], Loss: {avg_epoch_loss:.4f} (CE: {loss_ce.item():.4f}, LGKM: {loss_lgkm.item():.4f}, Lambda: {current_lambda_glob:.4f})')
 
-def evaluate_model(model, test_loader, device):
+def evaluate_model(model, test_loader, device, logger):
     """
     Evaluates the model's performance on the test dataset.
 
@@ -84,6 +77,7 @@ def evaluate_model(model, test_loader, device):
         model (torch.nn.Module): The global model to evaluate.
         test_loader (DataLoader): DataLoader for test data.
         device (torch.device): Device to evaluate on.
+        logger (logging.Logger): Logger instance.
 
     Returns:
         float: Accuracy of the model on the test dataset.
@@ -96,12 +90,12 @@ def evaluate_model(model, test_loader, device):
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
-            _, predicted  = torch.max(outputs.data, 1)
+            _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
     accuracy = 100 * correct / total
-    print(f'Server: Model Accuracy on Test Data: {accuracy:.2f}%')
+    logger.info(f'Server: Model Accuracy on Test Data: {accuracy:.2f}%')
     return accuracy
 
 def server_update(model_name, data, num_partitions, round_num, ipc, method, hratio, temperature, num_epochs, lambda_cdc, lambda_glob, device, logger):
@@ -123,6 +117,9 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
         lambda_glob (float): Weight for Global LGKM loss.
         device (str): Device to use for training ('cuda' or 'cpu').
         logger (logging.Logger): Logger instance.
+
+    Returns:
+        float or None: Accuracy of the updated model or None if skipped.
     """
     # Define paths and ensure directories exist
     data_path = '/home/t914a431/data'
@@ -161,30 +158,32 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     logger.info("Server: Test DataLoader created.")
 
     # Load aggregated class-wise soft labels Rc
-    global_probs_path = os.path.join('/home/t914a431/logits', 'Global', f'Round{round_num}_Global_Rc.pt')
-    if os.path.exists(global_probs_path):
+    global_rc_path = os.path.join('/home/t914a431/logits', 'Global', f'Round{round_num}_Global_R.pt')
+    if os.path.exists(global_rc_path):
         try:
-            Rc = torch.load(global_probs_path, map_location=device)
-            logger.info(f"Server: Loaded aggregated class-wise soft labels R(c) from {global_probs_path}.")
+            Rc_tensor = torch.load(global_rc_path, map_location=device)  # Shape: [10]
+            Rc_tensor = Rc_tensor / Rc_tensor.sum()  # Normalize to sum to 1
+            logger.info(f"Server: Loaded aggregated class-wise soft labels Rc from {global_rc_path}.")
         except Exception as e:
-            logger.error(f"Server: Error loading aggregated class-wise soft labels - {e}")
-            Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+            logger.error(f"Server: Error loading aggregated Rc - {e}")
+            Rc_tensor = torch.zeros(num_classes, device=device)  # Initialize with zeros if loading fails
     else:
-        logger.warning(f"Server: Aggregated class-wise soft labels not found at {global_probs_path}. Initializing with zeros.")
-        Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+        logger.warning(f"Server: Aggregated Rc not found at {global_rc_path}. Initializing with zeros.")
+        Rc_tensor = torch.zeros(num_classes, device=device)  # Initialize with zeros
 
+    # Aggregate synthetic data from clients
     all_images = []
     all_labels = []
     class_counts = torch.zeros(num_classes, device=device)
-    
+
     logger.info("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
-            '/home/t914a431/result',
+            '/home/t914a431/result',  # Adjusted based on main_fedaf.py
             f'Client_{client_id}',
             f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
         )
-    
+
         if os.path.exists(synthetic_data_filename):
             try:
                 data_dict = torch.load(synthetic_data_filename, map_location=device)
@@ -193,7 +192,7 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
                     images, labels = data_dict['images'], data_dict['labels']
                     all_images.append(images)
                     all_labels.append(labels)
-    
+
                     # Update class counts
                     for label in labels:
                         class_counts[label] += 1
@@ -203,16 +202,16 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
                 logger.error(f"Server: Error loading data from Client {client_id} - {e}")
         else:
             logger.warning(f"Server: No synthetic data found from Client {client_id} at {synthetic_data_filename}. Skipping.")
-        
-    # Remove data augmentation and use the aggregated data as-is
+
+    # Check if any synthetic data was aggregated
     if not all_images:
         logger.error("Server: No synthetic data aggregated from any client. Skipping model update for this round.")
-        return
-    
+        return None  # Return None to indicate skipped round
+
     # Concatenate all synthetic data
     all_images = torch.cat(all_images, dim=0)
     all_labels = torch.cat(all_labels, dim=0)
-    
+
     # Proceed to create the DataLoader and train the model
     final_dataset = TensorDataset(all_images, all_labels)
     train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
@@ -230,23 +229,23 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     )
     logger.info("Server: Global model loaded.")
 
-    # Compute T (class-wise averaged soft labels) from Rc
+    # Compute T (class-wise averaged soft labels) from Rc_tensor
     logger.info("Server: Computing class-wise averaged soft labels T.")
-    rc_tensor_valid = torch.stack(Rc).to(device)
-    r_tensor = rc_tensor_valid.mean(dim=0)
-    logger.info("Server: Computed class-wise averaged soft labels T.")
+    T_tensor = Rc_tensor.clone().detach()  # Shape: [10]
+    logger.info(f"Server: Computed class-wise averaged soft labels T with shape {T_tensor.shape}.")
 
     # Train the global model
     logger.info("Server: Starting global model training.")
     train_model(
         model=global_model,
         train_loader=train_loader,
-        rc_tensor=r_tensor,
+        rc_tensor=T_tensor,
         num_classes=num_classes,
         temperature=temperature,
         device=device,
         num_epochs=num_epochs,
-        lambda_glob=lambda_glob
+        lambda_glob=lambda_glob,
+        logger=logger
     )
     logger.info("Server: Global model training completed.")
 
@@ -255,7 +254,8 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
     accuracy = evaluate_model(
         model=global_model,
         test_loader=test_loader,
-        device=device
+        device=device,
+        logger=logger
     )
     logger.info(f"Server: Updated global model accuracy: {accuracy:.2f}%.")
 
@@ -269,31 +269,3 @@ def server_update(model_name, data, num_partitions, round_num, ipc, method, hrat
         logger.error(f"Server: Error saving the global model to {model_path} - {e}")
 
     return accuracy  # Return accuracy for tracking
-
-def evaluate_model(model, test_loader, device):
-    """
-    Evaluates the model's performance on the test dataset.
-
-    Args:
-        model (torch.nn.Module): The global model to evaluate.
-        test_loader (DataLoader): DataLoader for test data.
-        device (torch.device): Device to evaluate on.
-
-    Returns:
-        float: Accuracy of the model on the test dataset.
-    """
-    model.eval()  # Set the model to evaluation mode
-    correct = 0
-    total = 0
-
-    with torch.no_grad():  # No gradients needed
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    accuracy = 100 * correct / total
-    print(f'Server: Model Accuracy on Test Data: {accuracy:.2f}%')
-    return accuracy
