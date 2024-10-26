@@ -254,7 +254,8 @@ class Client:
                 device=self.device,
                 path=round_logit_path,
                 ipc=self.ipc,
-                temperature=self.temperature
+                temperature=self.temperature,
+                logit_type='V'
             )
             self.logger.info(f"Client {self.client_id}: Class-wise logits and soft labels calculated and saved.")
             self.round_logit_path = round_logit_path
