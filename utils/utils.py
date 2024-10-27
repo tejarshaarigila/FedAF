@@ -800,9 +800,8 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
     # Save the averaged logits
     try:
         for c in range(num_classes):
-            filename = f'{logit_type}kc_{c}.pt'
-            torch.save(logits_avg[c], os.path.join(path, filename))
-        logger.info(f"Saved averaged logits ({logit_type}kc) to {path}.")
+            torch.save(logits_avg[c], os.path.join(path, f'Vkc_{c}.pt'))
+        logger.info(f"Saved averaged logits for class {c} to {path}.")
     except Exception as e:
         logger.error(f"Error saving {logit_type}kc logits: {e}")
 
