@@ -143,7 +143,7 @@ def main():
         str(args.honesty_ratio)
     )
     logger.info(f"Saving partitions to directory: {partitions_save_dir}")
-    save_partitions(client_indices_per_round, partitions_save_dir, logger)
+    save_partitions(client_indices_per_round, partitions_save_dir)
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
     
     # Generate and save the data distribution graph
