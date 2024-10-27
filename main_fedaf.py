@@ -244,7 +244,7 @@ def save_aggregated_logits(aggregated_logits: torch.Tensor, args, round_num: int
     """
     logits_dir = os.path.join(args.logits_dir, 'Global')
     ensure_directory_exists(logits_dir)
-    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}.pt')
+    global_logits_path = os.path.join(logits_dir, f'Round{round_num}_Global_{v_r}c.pt')
     try:
         torch.save(aggregated_logits, global_logits_path)
         logger.info(f"Server: Aggregated logits saved to {global_logits_path}.")
