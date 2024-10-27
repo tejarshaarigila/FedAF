@@ -532,5 +532,7 @@ class Client:
             # Save the final synthetic data
             self.save_synthetic_data(round_num)
             self.logger.info(f"Client {self.client_id}: Synthetic data training completed for round {round_num}.")
+            return True
         except Exception as e:
             self.logger.error(f"Client {self.client_id}: Error during synthetic data training - {e}")
+            return False
