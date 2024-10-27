@@ -1,9 +1,8 @@
 # utils/generate_partitions.py
 
 import argparse
-from utils import load_data, partition_data_unique_rounds, save_partitions  # Updated import
+from utils.utils import load_data, partition_data_unique_rounds, save_partitions  # Corrected import
 import logging
-import multiprocessing as mp
 import os
 import matplotlib.pyplot as plt  # New import for plotting
 import numpy as np  # New import for numerical operations
@@ -18,7 +17,8 @@ def setup_logger():
     
     if not logger.handlers:
         log_directory = "/home/t914a431/log"
-        os.makedirs(log_directory, exist_ok=True)
+        from utils.utils import ensure_directory_exists  # Import the utility function
+        ensure_directory_exists(log_directory)
         file_handler = logging.FileHandler(os.path.join(log_directory, 'generate_partitions.log'))
         console_handler = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'MNIST', 'CelebA'],
                         help='Dataset to use')
     parser.add_argument('--num_clients', type=int, required=True, help='Number of clients')
-    parser.add_argument('--honesty_ratio', type=float, default='1.0', help='Honesty Ratio')
+    parser.add_argument('--honesty_ratio', type=float, default=1.0, help='Honesty Ratio')  # Corrected default
     parser.add_argument('--model', type=str, default='ConvNet', help='Model')
     parser.add_argument('--num_rounds', type=int, required=True, help='Number of communication rounds')
     parser.add_argument('--alpha', type=float, default=0.1, help='Dirichlet distribution parameter for data heterogeneity')
@@ -66,8 +66,8 @@ def plot_data_distribution_bubble(client_indices_per_round, save_path, num_clien
     rounds = np.arange(1, num_rounds + 1)
     clients = np.arange(1, num_clients + 1)
 
-    # Create a color map
-    cmap = cm.get_cmap('tab20', num_clients)  # Choose a colormap with enough distinct colors
+    # Create a color map with sufficient distinct colors
+    cmap = cm.get_cmap('hsv', num_clients)  # 'hsv' provides a wide range of colors
     colors = [cmap(i) for i in range(num_clients)]
 
     plt.figure(figsize=(16, 10))
@@ -85,7 +85,7 @@ def plot_data_distribution_bubble(client_indices_per_round, save_path, num_clien
     client_colors = np.repeat(range(num_clients), num_rounds)
     color_values = [colors[client] for client in client_colors]
 
-    scatter = plt.scatter(X, Y, s=sizes_normalized, c=client_colors, cmap='tab20', alpha=0.6, edgecolors='w', linewidth=0.5)
+    scatter = plt.scatter(X, Y, s=sizes_normalized, c=client_colors, cmap='hsv', alpha=0.6, edgecolors='w', linewidth=0.5)
 
     plt.xlabel('Communication Rounds', fontsize=14)
     plt.ylabel('Clients', fontsize=14)
@@ -94,9 +94,10 @@ def plot_data_distribution_bubble(client_indices_per_round, save_path, num_clien
     plt.yticks(ticks=np.arange(1, num_clients + 1, max(1, num_clients//10)))
     
     # Create a legend for clients
-    handles, labels = scatter.legend_elements(prop="colors", alpha=0.6)
-    legend_labels = [f'Client {i+1}' for i in range(num_clients)]
-    legend = plt.legend(handles, legend_labels, title="Clients", bbox_to_anchor=(1.05, 1), loc='upper left')
+    handles = []
+    for client_id in range(num_clients):
+        handles.append(plt.Line2D([], [], marker='o', color=colors[client_id], linestyle='', markersize=10, label=f'Client {client_id+1}'))
+    plt.legend(handles=handles, title="Clients", bbox_to_anchor=(1.05, 1), loc='upper left')
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
@@ -119,13 +120,14 @@ def main():
     
     # Load the dataset
     logger.info(f"Loading dataset: {args.dataset} from {args.data_path}")
-    dataset = load_data(args.dataset, data_path=args.data_path, train=True)
+    dataset, labels = load_data(args.dataset, data_path=args.data_path, train=True)  # Receive labels
     logger.info(f"Dataset loaded with {len(dataset)} samples.")
     
     # Partition the dataset using multiprocessing
     logger.info(f"Starting dataset partitioning with {args.num_workers} workers.")
     client_indices_per_round = partition_data_unique_rounds(
         dataset=dataset,
+        labels=labels,  # Pass labels to the partitioning function
         num_clients=args.num_clients,
         num_rounds=args.num_rounds,
         alpha=args.alpha,
@@ -142,7 +144,7 @@ def main():
         str(args.honesty_ratio)
     )
     logger.info(f"Saving partitions to directory: {partitions_save_dir}")
-    save_partitions(client_indices_per_round, partitions_save_dir)
+    save_partitions(client_indices_per_round, partitions_save_dir, logger)
     logger.info(f"Data partitions generated and saved to {args.save_dir}")
     
     # Generate and save the data distribution graph
