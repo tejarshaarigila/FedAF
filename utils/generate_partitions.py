@@ -1,7 +1,7 @@
 # utils/generate_partitions.py
 
 import argparse
-from utils.utils import load_data, partition_data_unique_rounds, save_partitions  # Corrected import
+from utils import load_data, partition_data_unique_rounds, save_partitions
 import logging
 import os
 import matplotlib.pyplot as plt  # New import for plotting
