@@ -120,14 +120,13 @@ def main():
     
     # Load the dataset
     logger.info(f"Loading dataset: {args.dataset} from {args.data_path}")
-    dataset = load_data(args.dataset, data_path=args.data_path, train=True)  # Receive labels
+    dataset = load_data(args.dataset, data_path=args.data_path, train=True)
     logger.info(f"Dataset loaded with {len(dataset)} samples.")
     
     # Partition the dataset using multiprocessing
     logger.info(f"Starting dataset partitioning with {args.num_workers} workers.")
     client_indices_per_round = partition_data_unique_rounds(
-        dataset=dataset,
-        labels=labels,  # Pass labels to the partitioning function
+        dataset=dataset,  # Pass the dataset directly
         num_clients=args.num_clients,
         num_rounds=args.num_rounds,
         alpha=args.alpha,
