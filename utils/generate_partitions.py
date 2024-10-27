@@ -17,7 +17,7 @@ def setup_logger():
     
     if not logger.handlers:
         log_directory = "/home/t914a431/log"
-        from utils.utils import ensure_directory_exists  # Import the utility function
+        from utils import ensure_directory_exists
         ensure_directory_exists(log_directory)
         file_handler = logging.FileHandler(os.path.join(log_directory, 'generate_partitions.log'))
         console_handler = logging.StreamHandler()
