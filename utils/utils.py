@@ -545,7 +545,22 @@ def load_data(dataset_name, data_path='data', train=True):
     logger.info("Dataset loaded successfully.")
     return dataset
 
+# Utility Functions
 
+def ensure_directory_exists(path: str):
+    """
+    Ensures that the specified directory exists. If it does not exist, creates it.
+    
+    Args:
+        path (str): The directory path to check/create.
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+        logger.debug(f"Directory ensured: {path}")
+    except Exception as e:
+        logger.error(f"Failed to create directory {path}: {e}")
+        raise
+        
 def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=42):
     """
     Partition the dataset into unique, non-overlapping subsets for each client across all rounds,
