@@ -560,9 +560,10 @@ def ensure_directory_exists(path: str):
     except Exception as e:
         logger.error(f"Failed to create directory {path}: {e}")
         raise
-        
-def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=42):
-   """
+
+
+def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=42, logger=None):
+    """
     Partition the dataset for each round using Dirichlet distribution.
 
     Args:
@@ -577,6 +578,10 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
     """
     np.random.seed(seed)
     torch.manual_seed(seed)
+    
+    if logger is None:
+        logger = logging.getLogger('GeneratePartitions')
+    
     logger.info("Starting dataset partitioning for each round with Dirichlet distribution.")
 
     client_indices_per_round = []
@@ -596,9 +601,16 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
         # Allocate data to clients using Dirichlet distribution
         for c in range(num_classes):
             available_indices = label_indices[c]
+            if len(available_indices) == 0:
+                continue  # Skip if no data is available for this class
+            
             proportions = np.random.dirichlet([alpha] * num_clients)
             proportions = (np.array(proportions) * len(available_indices)).astype(int)
-            proportions[-1] = len(available_indices) - np.sum(proportions[:-1])  # Adjust to ensure all samples are used
+            
+            # Ensure no negative or zero-sized allocation by adjusting proportions
+            proportions[-1] = len(available_indices) - np.sum(proportions[:-1])
+            if proportions[-1] < 0:
+                proportions[-1] = 0  # Adjust in case rounding issues occur
 
             start = 0
             for client_id, num_samples in enumerate(proportions):
@@ -610,7 +622,7 @@ def partition_data_unique_rounds(dataset, num_clients, num_rounds, alpha, seed=4
 
     logger.info("Dataset partitioning for each round completed successfully.")
     return client_indices_per_round
-
+    
 
 def save_partitions(client_indices_per_round, save_dir):
     """
