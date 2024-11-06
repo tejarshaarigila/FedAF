@@ -140,7 +140,7 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
         device (str): Device to use for training ('cuda' or 'cpu').
     """
     # Define paths and ensure directories exist
-    data_path = './data'
+    data_path = '/home/t914a431/data'
     model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
     ensure_directory_exists(model_dir)
 
