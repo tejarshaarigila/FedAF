@@ -178,10 +178,12 @@ class Client:
                             images, _ = next(iter(real_loader))
                             images = images.to(self.device)
                             if images.size(0) >= self.ipc:
-                                selected_images = images[:self.ipc]
+                                # Randomly select ipc indices
+                                indices = torch.randperm(images.size(0))[:self.ipc]
+                                selected_images = images[indices]
                                 initialized_classes.append(c)
                                 self.image_syn.data[c * self.ipc:(c + 1) * self.ipc] = selected_images.detach().data
-                                logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with real data.")
+                                logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with random real data.")
                             else:
                                 logger.warning(f"Client {self.client_id}: Not enough images for class {c}. Required at least {self.ipc}, Available: {images.size(0)}. Skipping initialization.")
                         except StopIteration:
