@@ -105,19 +105,18 @@ def simulate(rounds):
     for r in range(1, rounds + 1):
         print(f"--- Round {r}/{rounds} ---")
 
-        # Step 1: Clients calculate and save their class-wise logits
+        # Step 1: Clients calculate and save their Vkc logits (before data condensation)
         with ProcessPoolExecutor() as executor:
             futures = [
-                executor.submit(client_calculate_and_save_logits, client_id, data_partitions[client_id], args, r)
+                executor.submit(client_calculate_and_save_V_logits, client_id, data_partitions[client_id], args, r)
                 for client_id in client_ids
             ]
-            # Wait for all clients to finish
             for future in as_completed(futures):
-                future.result()  # Raise exceptions if any
+                future.result()
 
-        # Step 2: Server aggregates logits and saves aggregated logits for clients
-        aggregated_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
-        save_aggregated_logits(aggregated_logits, args, r, 'V')
+        # Step 2: Server aggregates V logits and saves aggregated logits for clients
+        aggregated_V_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
+        save_aggregated_logits(aggregated_V_logits, args, r, 'V')
 
         # Step 3: Clients perform Data Condensation on synthetic data S
         with ProcessPoolExecutor() as executor:
@@ -125,13 +124,23 @@ def simulate(rounds):
                 executor.submit(client_initialize_and_train_synthetic_data, client_id, data_partitions[client_id], args, r)
                 for client_id in client_ids
             ]
-            # Wait for all clients to finish
             for future in as_completed(futures):
-                future.result()  # Raise exceptions if any
+                future.result()
 
-        # Step 4: Server updates the global model using aggregated soft labels R & synthetic data S
-        aggregated_labels = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
-        save_aggregated_logits(aggregated_labels, args, r, 'R')
+        # Step 4: Clients calculate and save their Rkc logits (after data condensation)
+        with ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(client_calculate_and_save_R_logits, client_id, args, r)
+                for client_id in client_ids
+            ]
+            for future in as_completed(futures):
+                future.result()
+
+        # Step 5: Server aggregates R logits and saves aggregated logits
+        aggregated_R_logits = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
+        save_aggregated_logits(aggregated_R_logits, args, r, 'R')
+
+        # Step 6: Server updates the global model using aggregated R logits and synthetic data
         server_update(
             model_name=args.model,
             data=args.dataset,
@@ -146,21 +155,29 @@ def simulate(rounds):
             device=args.device,
         )
 
-def client_calculate_and_save_logits(client_id, data_partition, args, r):
+def client_calculate_and_save_V_logits(client_id, data_partition, args, r):
     """
-    Function to be called in parallel for clients to calculate and save logits.
+    Function for clients to calculate and save V logits before data condensation.
     """
     client = Client(client_id, data_partition, args)
-    client.calculate_and_save_logits(r)
+    client.calculate_and_save_V_logits(r)
 
 def client_initialize_and_train_synthetic_data(client_id, data_partition, args, r):
     """
-    Function to be called in parallel for clients to initialize and train synthetic data.
+    Function for clients to initialize and train synthetic data.
     """
     client = Client(client_id, data_partition, args)
     client.initialize_synthetic_data(r)
     client.train_synthetic_data(r)
     client.save_synthetic_data(r)
+
+def client_calculate_and_save_R_logits(client_id, args, r):
+    """
+    Function for clients to calculate and save R logits after data condensation.
+    """
+    client = Client(client_id, None, args)
+    client.load_synthetic_data(r)
+    client.calculate_and_save_R_logits(r)
 
 def aggregate_logits(client_ids, num_classes, v_r, args, r):
     """
@@ -188,7 +205,7 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
         else:
             aggregated_logits[c] = torch.zeros(num_classes, device=args.device)  # Default if no clients have data for class c
 
-    print("Server: Aggregated logits computed.")
+    print(f"Server: Aggregated {v_r} logits computed.")
     return aggregated_logits
 
 def save_aggregated_logits(aggregated_logits, args, r, v_r):
@@ -199,7 +216,7 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     os.makedirs(logits_dir, exist_ok=True)
     global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
     torch.save(aggregated_logits, global_logits_path)
-    print(f"Server: Aggregated logits saved to {global_logits_path}.")
+    print(f"Server: Aggregated {v_r} logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
     simulate(rounds=20)
