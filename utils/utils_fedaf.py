@@ -49,29 +49,32 @@ def compute_swd(logits1, logits2, num_projections=100):
     average_distance = np.mean(distances)
     return average_distance
 
-def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc, temperature):
+def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc, temperature, logits_type='V'):
     """
-    Calculates and saves class-wise averaged logits (V(k,c)) and probabilities (R(k,c)).
+    Calculates and saves class-wise averaged logits (V(k,c)) or probabilities (R(k,c)).
 
     Args:
         model_net (torch.nn.Module): The global model.
-        partition (torch.utils.data.Dataset): Client's data partition.
+        partition (torch.utils.data.Dataset or DataLoader): Data to use for calculations.
         num_classes (int): Number of classes.
         device (torch.device): Device to perform computations on.
         path (str): Directory path to save logits.
         ipc (int): Instances per class.
         temperature (float): Temperature parameter for softmax.
+        logits_type (str): 'V' for Vkc logits, 'R' for Rkc logits.
     """
 
     # Create subdirectories if they don't exist
     os.makedirs(path, exist_ok=True)
 
-    # Create DataLoader for the client's partition
-    dataloader = DataLoader(partition, batch_size=256, shuffle=False)
+    # If partition is a DataLoader, use it directly; otherwise, create a DataLoader
+    if isinstance(partition, DataLoader):
+        dataloader = partition
+    else:
+        dataloader = DataLoader(partition, batch_size=256, shuffle=False)
 
-    # Initialize storage for logits and probabilities
+    # Initialize storage for logits
     logits_by_class = [torch.empty((0, num_classes), device=device) for _ in range(num_classes)]
-    probs_by_class = [torch.empty((0, num_classes), device=device) for _ in range(num_classes)]
 
     model_net.eval()
     with torch.no_grad():
@@ -79,33 +82,32 @@ def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc
             images = images.to(device)
             labels = labels.to(device)
             logits = model_net(images)
-            probs = F.softmax(logits / temperature, dim=1)
-            
+            if logits_type == 'V':
+                output = logits
+            elif logits_type == 'R':
+                output = F.softmax(logits / temperature, dim=1)
+            else:
+                raise ValueError("logits_type must be 'V' or 'R'")
+
             for i in range(labels.size(0)):
                 label = labels[i].item()
-                logits_by_class[label] = torch.cat((logits_by_class[label], logits[i].unsqueeze(0)), dim=0)
-                probs_by_class[label] = torch.cat((probs_by_class[label], probs[i].unsqueeze(0)), dim=0)
+                logits_by_class[label] = torch.cat((logits_by_class[label], output[i].unsqueeze(0)), dim=0)
 
-    # Average logits and probabilities per class
+    # Average logits per class
     logits_avg = []
-    probs_avg = []
     for c in range(num_classes):
         if logits_by_class[c].size(0) >= ipc:
             avg_logit = logits_by_class[c].mean(dim=0)
-            avg_prob = probs_by_class[c].mean(dim=0)
         else:
             avg_logit = torch.zeros(num_classes, device=device)
-            avg_prob = torch.zeros(num_classes, device=device)
         logits_avg.append(avg_logit)
-        probs_avg.append(avg_prob)
 
-    # Save the averaged logits and probabilities
+    # Save the averaged logits
     try:
         for c in range(num_classes):
-            torch.save(logits_avg[c], os.path.join(path, f'Vkc_{c}.pt'))
-            torch.save(probs_avg[c], os.path.join(path, f'Rkc_{c}.pt'))
+            torch.save(logits_avg[c], os.path.join(path, f'{logits_type}kc_{c}.pt'))
     except Exception as e:
-        logger.error(f"Error saving logits and probabilities: {e}")
+        logger.error(f"Error saving {logits_type}kc logits: {e}")
 
 def load_latest_model(model_dir, model_name, channel, num_classes, im_size, device):
     """
