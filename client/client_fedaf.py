@@ -81,10 +81,11 @@ class Client:
             raise e
 
     def dynamic_lambda_cdc(self, r, total_rounds):
-        """Dynamically adjusts lambda_cdc based on the current round."""
-        max_lambda = 1.0
-        min_lambda = 0.1
-        lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
+        # """Dynamically adjusts lambda_cdc based on the current round."""
+        # max_lambda = 1.0
+        # min_lambda = 0.1
+        # lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
+        lambda_cdc = 0.8
         return lambda_cdc
 
     def resample_model(self, model_net):
