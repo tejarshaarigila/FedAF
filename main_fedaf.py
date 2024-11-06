@@ -6,7 +6,7 @@ import numpy as np
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import get_dataset, get_network
-import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 class ARGS:
     def __init__(self):
@@ -32,7 +32,7 @@ class ARGS:
         self.temperature = 2.0
         self.gamma = 0.9
         self.honesty_ratio = 1
-        self.model_dir = f'home/t914a431/models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
+        self.model_dir = f'/home/t914a431/models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
         if self.dataset == 'MNIST':
             self.channel = 1
             self.num_classes = 10
@@ -48,6 +48,7 @@ def initialize_global_model(args):
     """
     model = get_network(args.model, args.channel, args.num_classes, args.im_size)
     model_dir = args.model_dir
+    os.makedirs(model_dir, exist_ok=True)
     model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
     torch.save(model.state_dict(), model_path)
     print(f"Global model initialized and saved to {model_path}.")
@@ -105,22 +106,28 @@ def simulate(rounds):
         print(f"--- Round {r}/{rounds} ---")
 
         # Step 1: Clients calculate and save their class-wise logits
-        pool_args = [
-            (client_id, data_partitions[client_id], args, r) for client_id in client_ids
-        ]
-        with multiprocessing.Pool() as pool:
-            pool.starmap(client_calculate_and_save_logits, pool_args)
+        with ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(client_calculate_and_save_logits, client_id, data_partitions[client_id], args, r)
+                for client_id in client_ids
+            ]
+            # Wait for all clients to finish
+            for future in as_completed(futures):
+                future.result()  # Raise exceptions if any
 
         # Step 2: Server aggregates logits and saves aggregated logits for clients
         aggregated_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
         save_aggregated_logits(aggregated_logits, args, r, 'V')
 
         # Step 3: Clients perform Data Condensation on synthetic data S
-        pool_args = [
-            (client_id, data_partitions[client_id], args, r) for client_id in client_ids
-        ]
-        with multiprocessing.Pool() as pool:
-            pool.starmap(client_initialize_and_train_synthetic_data, pool_args)
+        with ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(client_initialize_and_train_synthetic_data, client_id, data_partitions[client_id], args, r)
+                for client_id in client_ids
+            ]
+            # Wait for all clients to finish
+            for future in as_completed(futures):
+                future.result()  # Raise exceptions if any
 
         # Step 4: Server updates the global model using aggregated soft labels R & synthetic data S
         aggregated_labels = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
