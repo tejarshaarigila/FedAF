@@ -1,127 +1,82 @@
 # server_fedavg.py
 
+import os
 import torch
 import logging
-import os
-from utils.utils import get_network
+from utils.utils_fedavg import get_network
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class Server:
     def __init__(self, args):
-        """
-        Initializes the server for federated averaging.
-
-        Args:
-            args (Namespace): Parsed arguments containing configurations.
-        """
         self.args = args
-        self.device = args.device
-        self.model = get_network(
-            args.model,
-            args.channel,
-            args.num_classes,
-            args.im_size,
-            device=self.device
-        )
-        self.model.to(self.device)
-        self.logger = logging.getLogger('FedAvg.Server')
-        self.setup_logger()
-        self.logger.info("Server initialized with model '%s'.", args.model)
+        self.num_clients = args.num_clients
+        self.global_model = self.initialize_model()
+        logger.info("Server initialized with model: %s for dataset: %s", args.model, args.dataset)
 
-    def setup_logger(self):
-        """
-        Sets up the logger for the server to log to a separate file.
-        """
-        log_dir = "/home/t914a431/log/server_logs/"
-        os.makedirs(log_dir, exist_ok=True)
-        server_log_file = os.path.join(log_dir, 'server_fedavg.log')
+    def initialize_model(self):
+        im_size = self.args.im_size
+        channel = self.args.channel
+        num_classes = self.args.num_classes
 
-        # Prevent adding multiple handlers if already added
-        if not self.logger.handlers:
-            file_handler = logging.FileHandler(server_log_file)
-            console_handler = logging.StreamHandler()
+        model = get_network(
+            model=self.args.model,
+            channel=channel,
+            num_classes=num_classes,
+            im_size=im_size
+        ).to(self.args.device)
+        
+        logger.info("Global model initialized.")
+        return model
 
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-            file_handler.setFormatter(formatter)
-            console_handler.setFormatter(formatter)
+    def get_global_model(self):
+        return self.global_model.state_dict()
 
-            self.logger.addHandler(file_handler)
-            self.logger.addHandler(console_handler)
-            self.logger.setLevel(logging.INFO)
+    def aggregate(self, client_models, data_sizes):
+        """Aggregates client models using FedAvg with weighting by data sizes."""
+        logger.info("Aggregating client models with data size weighting.")
+        global_dict = self.global_model.state_dict()
+        total_samples = sum(data_sizes)
+        averaged_params = {key: torch.zeros_like(param) for key, param in global_dict.items()}
 
-    def get_global_model_state(self):
-        """
-        Retrieves the state dictionary of the global model.
+        # Sum the weighted parameters from each client
+        for client_model, data_size in zip(client_models, data_sizes):
+            weight = data_size / total_samples
+            for key in global_dict.keys():
+                averaged_params[key] += client_model[key] * weight
 
-        Returns:
-            dict: State dictionary of the global model.
-        """
-        self.logger.info("Server: Retrieving global model state.")
-        return self.model.state_dict()
-
-    def aggregate(self, client_models, client_sizes):
-        """
-        Aggregates client models into the global model using weighted averaging.
-        Ensures all client models are on the same device as the server.
-        """
-        self.logger.info("Server: Starting aggregation of client models.")
-        total_size = sum(client_sizes)
-        self.logger.info(f"Server: Total data size across all clients: {total_size}")
-    
-        # Initialize the aggregated state dictionary
-        aggregated_state_dict = {key: torch.zeros_like(val, device=self.device) for key, val in self.model.state_dict().items()}
-    
-        # Weighted aggregation
-        for idx, (client_state, client_size) in enumerate(zip(client_models, client_sizes)):
-            weight = client_size / total_size
-            for key in aggregated_state_dict:
-                aggregated_state_dict[key] += client_state[key].to(self.device) * weight
-            self.logger.debug(f"Server: Aggregated weights from client {idx} with size {client_size}.")
-    
-        # Update the global model
-        self.model.load_state_dict(aggregated_state_dict)
-        self.logger.info("Server: Global model updated with aggregated client models.")
+        # Update the global model parameters
+        self.global_model.load_state_dict(averaged_params)
+        logger.info("Model aggregation completed.")
 
     def evaluate(self, test_loader, round_num):
-        """
-        Evaluates the global model on the test dataset.
-
-        Args:
-            test_loader (DataLoader): DataLoader for the test dataset.
-            round_num (int): Current round number.
-
-        Returns:
-            float: Accuracy of the global model on the test dataset.
-        """
-        self.logger.info(f"Server: Evaluating global model at round {round_num}.")
-        self.model.eval()
+        """Evaluates the global model on test data and saves the model."""
+        self.global_model.eval()
         correct = 0
         total = 0
-
         with torch.no_grad():
-            for data, target in test_loader:
-                data, target = data.to(self.device), target.to(self.device)
-                outputs = self.model(data)
+            for images, labels in test_loader:
+                images, labels = images.to(self.args.device), labels.to(self.args.device)
+                outputs = self.global_model(images)
                 _, predicted = torch.max(outputs.data, 1)
-                total += target.size(0)
-                correct += (predicted == target).sum().item()
-
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
         accuracy = 100 * correct / total
-        self.logger.info(f"Server: Round {round_num} - Global Model Accuracy: {accuracy:.2f}%")
+        
+        # Save the global model after evaluation
+        model_save_path = f"models/{self.args.dataset}/{self.args.model}/{self.args.num_clients}/{self.args.honesty_ratio}/fedavg_global_model_{round_num}.pth"
+        
+        # Extract the directory path from the model save path
+        model_save_dir = os.path.dirname(model_save_path)
+
+        # Check if the directory exists, if not, create it
+        if not os.path.exists(model_save_dir):
+            os.makedirs(model_save_dir)
+
+        torch.save(self.global_model.state_dict(), model_save_path)
+        
+        logger.info("Global Model Accuracy: %.2f%%", accuracy)
+        logger.info("Global model saved at: %s", model_save_path)
+        
         return accuracy
-
-    def save_model(self, round_num):
-        """
-        Saves the global model to disk.
-
-        Args:
-            round_num (int): Current round number.
-        """
-        model_dir = os.path.join('/home/t914a431/models', self.args.dataset, self.args.model, str(self.args.num_clients), str(self.args.honesty_ratio))
-        os.makedirs(model_dir, exist_ok=True)
-        model_path = os.path.join(model_dir, f'fedavg_global_model_round_{round_num}.pth')
-        try:
-            torch.save(self.model.state_dict(), model_path)
-            self.logger.info(f"Server: Global model saved to {model_path}.")
-        except Exception as e:
-            self.logger.error(f"Server: Error saving global model to {model_path} - {e}")
-            
