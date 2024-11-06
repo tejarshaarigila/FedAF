@@ -15,10 +15,10 @@ class ARGS:
         self.model_name = self.model
         self.method = 'DM'
         self.init = 'real'
-        self.data_path = 'data'
-        self.logits_dir = 'logits'
-        self.save_image_dir = 'images'
-        self.save_path = 'result'
+        self.data_path = '/home/t914a431/data'
+        self.logits_dir = '/home/t914a431/logits'
+        self.save_image_dir = '/home/t914a431/images'
+        self.save_path = '/home/t914a431/result'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
@@ -32,7 +32,7 @@ class ARGS:
         self.temperature = 2.0
         self.gamma = 0.9
         self.honesty_ratio = 1
-        self.model_dir = f'./models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
+        self.model_dir = f'home/t914a431/models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
         if self.dataset == 'MNIST':
             self.channel = 1
             self.num_classes = 10
