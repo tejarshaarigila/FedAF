@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torchvision.utils import save_image
 from torch import optim
-from torch.utils.data import DataLoader, Subset 
+from torch.utils.data import DataLoader, Subset, TensorDataset
 from utils.utils_fedaf import (
     load_latest_model,
     calculate_logits_labels,
