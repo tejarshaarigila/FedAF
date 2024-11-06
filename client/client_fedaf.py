@@ -102,6 +102,76 @@ class Client:
                 param.data = self.gamma * param.data + (1 - self.gamma) * noise
         logger.info(f"Client {self.client_id}: Model parameters resampled.")
 
+    def calculate_and_save_V_logits(self, r):
+        """
+        Calculates and saves class-wise averaged logits Vkc before data condensation.
+        """
+        self.logit_path = os.path.join(
+            self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
+        )
+        os.makedirs(self.logit_path, exist_ok=True)
+    
+        logger.info(f"Client {self.client_id}: Calculating and saving Vkc logits.")
+        try:
+            calculate_logits_labels(
+                model_net=self.model,
+                partition=self.data_partition,
+                num_classes=self.num_classes,
+                device=self.device,
+                path=self.logit_path,
+                ipc=self.ipc,
+                temperature=self.temperature,
+                logits_type='V'  # Specify that we are calculating V logits
+            )
+            logger.info(f"Client {self.client_id}: Vkc logits calculated and saved.")
+        except Exception as e:
+            logger.error(f"Client {self.client_id}: Error calculating and saving Vkc logits - {e}")
+
+    def calculate_and_save_R_logits(self, r):
+        """
+        Calculates and saves class-wise averaged logits Rkc after data condensation.
+        """
+        self.logit_path = os.path.join(
+            self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
+        )
+        os.makedirs(self.logit_path, exist_ok=True)
+    
+        logger.info(f"Client {self.client_id}: Calculating and saving Rkc logits using synthetic data.")
+        try:
+            calculate_logits_labels(
+                model_net=self.model,
+                partition=self.synthetic_data,  # Use synthetic data
+                num_classes=self.num_classes,
+                device=self.device,
+                path=self.logit_path,
+                ipc=self.ipc,
+                temperature=self.temperature,
+                logits_type='R'  # Specify that we are calculating R logits
+            )
+            logger.info(f"Client {self.client_id}: Rkc logits calculated and saved.")
+        except Exception as e:
+            logger.error(f"Client {self.client_id}: Error calculating and saving Rkc logits - {e}")
+    
+    def load_synthetic_data(self, r):
+        """
+        Loads the synthetic data saved after data condensation.
+        """
+        savepath = os.path.join(
+            self.synthetic_data_path,
+            f'res_{self.method}_{self.dataset}_{self.model_name}_Client{self.client_id}_{self.ipc}ipc_Round{r}.pt'
+        )
+        try:
+            data_save = torch.load(savepath, map_location=self.device)
+            self.synthetic_data = DataLoader(
+                TensorDataset(data_save['images'].to(self.device), data_save['labels'].to(self.device)),
+                batch_size=self.ipc,
+                shuffle=False
+            )
+            logger.info(f"Client {self.client_id}: Synthetic data loaded from {savepath}.")
+        except Exception as e:
+            logger.error(f"Client {self.client_id}: Error loading synthetic data - {e}")
+            raise e
+
     def calculate_and_save_logits(self, r):
         """
         Calculates class-wise averaged logits and saves them to disk.
