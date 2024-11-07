@@ -128,7 +128,7 @@ def simulate(rounds):
                 future.result()
 
         # Step 4: Clients calculate and save their Rkc logits (after data condensation)
-        with ProcessPoolExecutor() as executor:
+        with ThreadPoolExecutor() as executor:
             futures = [
                 executor.submit(client_calculate_and_save_R_logits, client_id, args, r)
                 for client_id in client_ids
