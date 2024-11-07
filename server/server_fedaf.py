@@ -141,7 +141,7 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
     """
     # Define paths and ensure directories exist
     data_path = '/home/t914a431/data'
-    model_dir = os.path.join('models', data, model_name, str(num_partitions), str(hratio))
+    model_dir = os.path.join('/home/t914a431/models', data, model_name, str(num_partitions), str(hratio))
     ensure_directory_exists(model_dir)
 
     # Load test dataset with necessary transformations
@@ -173,7 +173,7 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
     test_loader = DataLoader(dst_test, batch_size=256, shuffle=False)
 
     # Load aggregated class-wise soft labels Rc
-    global_probs_path = os.path.join('logits', 'Global', f'Round{round_num}_Global_Rc.pt')
+    global_probs_path = os.path.join('/home/t914a431/logits', 'Global', f'Round{round_num}_Global_Rc.pt')
     if os.path.exists(global_probs_path):
         Rc = torch.load(global_probs_path, map_location=device)
         print("Server: Loaded aggregated class-wise soft labels R(c).")
@@ -188,7 +188,7 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
     print("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
-            'home',
+            '/home',
             't914a431',
             'result',
             f'Client_{client_id}',
