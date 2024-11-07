@@ -128,7 +128,7 @@ def load_latest_model(model_dir, model_name, channel, num_classes, im_size, devi
         if os.path.exists(model_dir) and os.listdir(model_dir):
             model_files = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if f.endswith('.pth') and f.startswith('fedaf')]
             latest_model_file = max(model_files, key=os.path.getmtime, default=None)
-            
+
             if latest_model_file:
                 net = get_network(model_name, channel, num_classes, im_size).to(device)
                 state_dict = torch.load(latest_model_file, map_location=device)
@@ -181,10 +181,10 @@ def get_dataset(dataset, data_path, num_partitions, alpha):
     else:
         logger.error(f"Unknown dataset: {dataset}")
         raise ValueError(f"Unknown dataset: {dataset}")
-    
+
     labels = np.array(base_train.targets)
     indices = [[] for _ in range(num_partitions)]
-    
+
     for c in range(num_classes):
         class_indices = np.where(labels == c)[0]
         np.random.shuffle(class_indices)
@@ -194,14 +194,36 @@ def get_dataset(dataset, data_path, num_partitions, alpha):
         for idx in range(num_partitions):
             if idx < len(class_splits):
                 indices[idx].extend(class_splits[idx])
-    
+
     # Create subsets for each partition
     dst_train_partitions = [Subset(base_train, idx) for idx in indices]
-    
+
     # Create test DataLoader
     testloader = DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=4)
-    
+
     return channel, im_size, num_classes, class_names, mean, std, dst_train_partitions, dst_test, testloader
+
+def get_base_dataset(dataset_name, data_path, train=True):
+    """
+    Returns the base dataset without any partitioning, used for reconstructing datasets in subprocesses.
+    """
+    if dataset_name == 'CIFAR10':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+            # Add other necessary transformations if any
+        ])
+        dataset = datasets.CIFAR10(data_path, train=train, download=True, transform=transform)
+    elif dataset_name == 'MNIST':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.1307], std=[0.3081]),
+            # Add other necessary transformations if any
+        ])
+        dataset = datasets.MNIST(data_path, train=train, download=True, transform=transform)
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
+    return dataset
 
 def get_network(model, channel, num_classes, im_size=(32, 32)):
     torch.random.manual_seed(int(time.time() * 1000) % 100000)
@@ -227,65 +249,11 @@ def get_network(model, channel, num_classes, im_size=(32, 32)):
         net = ResNet18BN_AP(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18BN':
         net = ResNet18BN(channel=channel, num_classes=num_classes)
-
-    elif model == 'ConvNetD1':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=1, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetD2':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=2, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetD3':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=3, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetD4':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=4, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetW32':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=32, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetW64':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=64, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetW128':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=128, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetW256':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=256, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetAS':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='sigmoid', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetAR':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='relu', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetAL':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='leakyrelu', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetASwish':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='swish', net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetASwishBN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act='swish', net_norm='batchnorm', net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetNN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='none', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetBN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='batchnorm', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetLN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='layernorm', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetIN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='instancenorm', net_pooling=net_pooling, im_size=im_size)
-    elif model == 'ConvNetGN':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm='groupnorm', net_pooling=net_pooling, im_size=im_size)
-
-    elif model == 'ConvNetNP':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='none', im_size=im_size)
-    elif model == 'ConvNetMP':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='maxpooling', im_size=im_size)
-    elif model == 'ConvNetAP':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='avgpooling', im_size=im_size)
-
     else:
         net = None
         exit('unknown model: %s'%model)
 
-    gpu_num = torch.cuda.device_count()
-    if gpu_num>0:
-        device = 'cuda'
-        if gpu_num>1:
-            net = nn.DataParallel(net)
-    else:
-        device = 'cpu'
+    device = 'cpu'
     net = net.to(device)
 
     return net
@@ -330,3 +298,12 @@ def get_eval_pool(eval_mode, model, model_eval):
         model_eval_pool = [model_eval]
     return model_eval_pool
 
+def ensure_directory_exists(path):
+    """
+    Ensures that the directory exists; if not, creates it.
+
+    Args:
+        path (str): Directory path to check and create.
+    """
+    if not os.path.exists(path):
+        os.makedirs(path)
