@@ -5,18 +5,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torchvision import datasets, transforms
-from utils.utils_fedaf import load_latest_model
+from utils_fedaf import load_latest_model, ensure_directory_exists
 import torch.optim as optim
-
-def ensure_directory_exists(path):
-    """
-    Ensures that the directory exists; if not, creates it.
-
-    Args:
-        path (str): Directory path to check and create.
-    """
-    if not os.path.exists(path):
-        os.makedirs(path)
 
 def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
     """
@@ -122,7 +112,7 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
     return T_tensor
 
-def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc, method, hratio, temperature, num_epochs, device="cuda" if torch.cuda.is_available() else "cpu"):
+def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc, method, hratio, temperature, num_epochs, device="cpu"):
     """
     Aggregates synthetic data from all clients, updates the global model, evaluates it,
     and computes aggregated logits to send back to clients.
@@ -212,9 +202,7 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
 
     if not all_images:
         print("Server: No synthetic data aggregated from clients. Skipping model update.")
-        # Initialize aggregated logits with zeros
-        aggregated_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-        return aggregated_logits
+        return
 
     # Concatenate all synthetic data
     all_images = torch.cat(all_images, dim=0)
