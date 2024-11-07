@@ -188,6 +188,8 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
     print("Server: Aggregating synthetic data from clients.")
     for client_id in range(num_partitions):
         synthetic_data_filename = os.path.join(
+            'home',
+            't914a431',
             'result',
             f'Client_{client_id}',
             f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
