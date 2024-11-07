@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torchvision import datasets, transforms
-from utils_fedaf import load_latest_model, ensure_directory_exists
+from utils.utils_fedaf import load_latest_model, ensure_directory_exists
 import torch.optim as optim
 
 def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
