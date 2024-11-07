@@ -6,7 +6,7 @@ import numpy as np
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import get_dataset, get_network
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 class ARGS:
     def __init__(self):
@@ -106,7 +106,7 @@ def simulate(rounds):
         print(f"--- Round {r}/{rounds} ---")
 
         # Step 1: Clients calculate and save their Vkc logits (before data condensation)
-        with ThreadPoolExecutor() as executor:
+        with ProcessPoolExecutor() as executor:
             futures = [
                 executor.submit(client_calculate_and_save_V_logits, client_id, data_partitions[client_id], args, r)
                 for client_id in client_ids
@@ -119,7 +119,7 @@ def simulate(rounds):
         save_aggregated_logits(aggregated_V_logits, args, r, 'V')
 
         # Step 3: Clients perform Data Condensation on synthetic data S
-        with ThreadPoolExecutor() as executor:
+        with ProcessPoolExecutor() as executor:
             futures = [
                 executor.submit(client_initialize_and_train_synthetic_data, client_id, data_partitions[client_id], args, r)
                 for client_id in client_ids
@@ -128,7 +128,7 @@ def simulate(rounds):
                 future.result()
 
         # Step 4: Clients calculate and save their Rkc logits (after data condensation)
-        with ThreadPoolExecutor() as executor:
+        with ProcessPoolExecutor() as executor:
             futures = [
                 executor.submit(client_calculate_and_save_R_logits, client_id, args, r)
                 for client_id in client_ids
