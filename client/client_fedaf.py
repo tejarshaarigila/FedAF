@@ -7,7 +7,7 @@ import torch
 from torchvision.utils import save_image
 from torch import optim
 from torch.utils.data import DataLoader, Subset, TensorDataset
-from utils.utils_fedaf import (
+from utils_fedaf import (
     load_latest_model,
     calculate_logits_labels,
     compute_swd,
@@ -51,8 +51,55 @@ class Client:
 
         self.synthetic_data = []
         self.global_Vc = []
-        
+        self.initialized_classes = []
+        self.model = None  # Will be loaded in run methods
+
+    def run_Vkc(self, r):
+        """
+        Runs the computation of Vkc logits.
+        """
+        # Load and resample the model
         self.model = self.load_global_model()
+        self.resample_model(self.model)
+
+        # Calculate and save Vkc
+        self.calculate_and_save_V_logits(r)
+
+    def run_data_condensation(self, r):
+        """
+        Runs data condensation.
+        """
+        # Load the model (already resampled in run_Vkc)
+        if self.model is None:
+            self.model = self.load_global_model()
+            self.resample_model(self.model)
+
+        # Load global aggregated logits
+        self.global_Vc = self.load_global_aggregated_logits(r)
+
+        # Initialize synthetic data
+        self.initialize_synthetic_data(r)
+
+        # Train synthetic data
+        self.train_synthetic_data(r)
+
+        # Save synthetic data
+        self.save_synthetic_data(r)
+
+    def run_Rkc(self, r):
+        """
+        Runs the computation of Rkc logits.
+        """
+        # Load the model (already resampled in run_Vkc)
+        if self.model is None:
+            self.model = self.load_global_model()
+            self.resample_model(self.model)
+
+        # Load synthetic data
+        self.load_synthetic_data(r)
+
+        # Calculate and save Rkc
+        self.calculate_and_save_R_logits(r)
 
     def load_global_model(self):
         """
@@ -71,9 +118,8 @@ class Client:
                 im_size=self.im_size,
                 device=self.device
             )
-            self.resample_model(model_net)
             model_net.eval()
-            logger.info(f"Client {self.client_id}: Global model loaded and resampled successfully.")
+            logger.info(f"Client {self.client_id}: Global model loaded successfully.")
             return model_net
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error loading global model - {e}")
@@ -100,6 +146,7 @@ class Client:
                 noise = torch.randn_like(param)
                 param.data = self.gamma * param.data + (1 - self.gamma) * noise
         logger.info(f"Client {self.client_id}: Model parameters resampled.")
+        self.model = model_net  # Update the model
 
     def calculate_and_save_V_logits(self, r):
         """
@@ -109,7 +156,7 @@ class Client:
             self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
         )
         os.makedirs(self.logit_path, exist_ok=True)
-    
+
         logger.info(f"Client {self.client_id}: Calculating and saving Vkc logits.")
         try:
             calculate_logits_labels(
@@ -134,7 +181,7 @@ class Client:
             self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
         )
         os.makedirs(self.logit_path, exist_ok=True)
-    
+
         logger.info(f"Client {self.client_id}: Calculating and saving Rkc logits using synthetic data.")
         try:
             calculate_logits_labels(
@@ -150,7 +197,7 @@ class Client:
             logger.info(f"Client {self.client_id}: Rkc logits calculated and saved.")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error calculating and saving Rkc logits - {e}")
-    
+
     def load_synthetic_data(self, r):
         """
         Loads the synthetic data saved after data condensation.
@@ -170,31 +217,6 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error loading synthetic data - {e}")
             raise e
-
-    def calculate_and_save_logits(self, r):
-        """
-        Calculates class-wise averaged logits and saves them to disk.
-        """
-        self.logit_path = os.path.join(
-            self.args.logits_dir, f'Client_{self.client_id}', f'Round_{r}'
-        )
-        os.makedirs(self.logit_path, exist_ok=True)
-
-        logger.info(f"Client {self.client_id}: Calculating and saving class-wise logits and soft labels.")
-
-        try:
-            calculate_logits_labels(
-                model_net=self.model,
-                partition=self.data_partition,
-                num_classes=self.num_classes,
-                device=self.device,
-                path=self.logit_path,
-                ipc=self.ipc,
-                temperature=self.temperature
-            )
-            logger.info(f"Client {self.client_id}: Class-wise logits and soft labels calculated and saved.")
-        except Exception as e:
-            logger.error(f"Client {self.client_id}: Error calculating and saving logits - {e}")
 
     def load_global_aggregated_logits(self, r):
         """
@@ -220,9 +242,6 @@ class Client:
         """
         logger.info(f"Client {self.client_id}: Initializing synthetic data.")
         try:
-            # Load global aggregated logits for the current round
-            self.global_Vc = self.load_global_aggregated_logits(r)
-
             # Initialize synthetic images and labels
             self.image_syn = torch.randn(
                 size=(self.num_classes * self.ipc, self.channel, self.im_size[0], self.im_size[1]),
@@ -269,7 +288,6 @@ class Client:
             logger.error(f"Client {self.client_id}: Error initializing synthetic data - {e}")
             raise e
 
-
     def get_images_loader(self, class_label, max_batch_size=256):
         """
         Retrieves a DataLoader that yields a batch of images from a specified class.
@@ -293,7 +311,7 @@ class Client:
 
             # Determine actual batch size
             actual_batch_size = min(len(class_indices), max_batch_size)
-            
+
             # Select indices up to the actual batch size
             selected_indices = np.random.choice(class_indices, size=actual_batch_size, replace=False)
 
@@ -406,7 +424,7 @@ class Client:
                     if img_syn.size(0) == 0:
                         logger.warning(f"Client {self.client_id}: No synthetic images for class {c}. Skipping.")
                         continue
-                    
+
                     # Compute synthetic logits using the global model
                     logit_syn = self.model(img_syn)
                     local_ukc = torch.mean(logit_syn, dim=0)
@@ -449,8 +467,6 @@ class Client:
                 if it % 10 == 0 or it == self.args.Iteration:
                     logger.info(f"Client {self.client_id}: Iteration {it}, Loss: {loss.item():.4f}")
 
-            # Save the final synthetic data
-            self.save_synthetic_data(r)
             logger.info(f"Client {self.client_id}: Synthetic data training completed.")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error during synthetic data training - {e}")
