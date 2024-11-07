@@ -3,9 +3,9 @@
 import os
 import torch
 import numpy as np
-from client_fedaf import Client
-from server_fedaf import server_update
-from utils_fedaf import get_dataset, get_network, get_base_dataset
+from client.client_fedaf import Client
+from server.server_fedaf import server_update
+from utils.utils_fedaf import get_dataset, get_network, get_base_dataset
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import copy
 import multiprocessing
