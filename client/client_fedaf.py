@@ -51,8 +51,7 @@ class Client:
 
         self.synthetic_data = []
         self.global_Vc = []
-
-        # Initialize the client components
+        
         self.model = self.load_global_model()
 
     def load_global_model(self):
