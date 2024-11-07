@@ -3,10 +3,12 @@
 import os
 import torch
 import numpy as np
-from client.client_fedaf import Client
-from server.server_fedaf import server_update
-from utils.utils_fedaf import get_dataset, get_network
+from client_fedaf import Client
+from server_fedaf import server_update
+from utils_fedaf import get_dataset, get_network, get_base_dataset
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import copy
+import multiprocessing
 
 class ARGS:
     def __init__(self):
@@ -19,7 +21,7 @@ class ARGS:
         self.logits_dir = '/home/t914a431/logits'
         self.save_image_dir = '/home/t914a431/images'
         self.save_path = '/home/t914a431/result'
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = 'cpu'  # Use 'cpu' for multiprocessing
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
         self.Iteration = 1000
@@ -41,6 +43,13 @@ class ARGS:
             self.channel = 3
             self.num_classes = 10
             self.im_size = (32, 32)
+
+    @classmethod
+    def from_dict(cls, args_dict):
+        args = cls()
+        for key, value in args_dict.items():
+            setattr(args, key, value)
+        return args
 
 def initialize_global_model(args):
     """
@@ -101,6 +110,11 @@ def simulate(rounds):
     client_ids = list(range(len(dst_train)))
     data_partitions = dst_train  # List of data partitions
 
+    # Prepare picklable arguments
+    args_dict = copy.deepcopy(vars(args))
+    args_dict['device'] = str(args.device)  # Convert torch.device to string
+    data_partition_indices = [partition.indices for partition in data_partitions]
+
     # Main communication rounds
     for r in range(1, rounds + 1):
         print(f"--- Round {r}/{rounds} ---")
@@ -108,7 +122,7 @@ def simulate(rounds):
         # Step 1: Clients calculate and save their Vkc logits (before data condensation)
         with ProcessPoolExecutor() as executor:
             futures = [
-                executor.submit(client_calculate_and_save_V_logits, client_id, data_partitions[client_id], args, r)
+                executor.submit(client_compute_Vkc, client_id, data_partition_indices[client_id], args_dict, r)
                 for client_id in client_ids
             ]
             for future in as_completed(futures):
@@ -121,7 +135,7 @@ def simulate(rounds):
         # Step 3: Clients perform Data Condensation on synthetic data S
         with ProcessPoolExecutor() as executor:
             futures = [
-                executor.submit(client_initialize_and_train_synthetic_data, client_id, data_partitions[client_id], args, r)
+                executor.submit(client_data_condensation, client_id, data_partition_indices[client_id], args_dict, r)
                 for client_id in client_ids
             ]
             for future in as_completed(futures):
@@ -130,7 +144,7 @@ def simulate(rounds):
         # Step 4: Clients calculate and save their Rkc logits (after data condensation)
         with ProcessPoolExecutor() as executor:
             futures = [
-                executor.submit(client_calculate_and_save_R_logits, client_id, args, r)
+                executor.submit(client_compute_Rkc, client_id, args_dict, r)
                 for client_id in client_ids
             ]
             for future in as_completed(futures):
@@ -155,29 +169,46 @@ def simulate(rounds):
             device=args.device,
         )
 
-def client_calculate_and_save_V_logits(client_id, data_partition, args, r):
-    """
-    Function for clients to calculate and save V logits before data condensation.
-    """
-    client = Client(client_id, data_partition, args)
-    client.calculate_and_save_V_logits(r)
+def client_compute_Vkc(client_id, data_partition_indices, args_dict, r):
+    # Reconstruct args
+    args = ARGS.from_dict(args_dict)
+    args.device = torch.device(args.device)
 
-def client_initialize_and_train_synthetic_data(client_id, data_partition, args, r):
-    """
-    Function for clients to initialize and train synthetic data.
-    """
-    client = Client(client_id, data_partition, args)
-    client.initialize_synthetic_data(r)
-    client.train_synthetic_data(r)
-    client.save_synthetic_data(r)
+    # Reconstruct data_partition
+    dataset = get_base_dataset(args.dataset, args.data_path, train=True)
+    data_partition = Subset(dataset, data_partition_indices)
 
-def client_calculate_and_save_R_logits(client_id, args, r):
-    """
-    Function for clients to calculate and save R logits after data condensation.
-    """
+    # Create client instance
+    client = Client(client_id, data_partition, args)
+
+    # Only calculate and save Vkc
+    client.run_Vkc(r)
+
+def client_data_condensation(client_id, data_partition_indices, args_dict, r):
+    # Reconstruct args
+    args = ARGS.from_dict(args_dict)
+    args.device = torch.device(args.device)
+
+    # Reconstruct data_partition
+    dataset = get_base_dataset(args.dataset, args.data_path, train=True)
+    data_partition = Subset(dataset, data_partition_indices)
+
+    # Create client instance
+    client = Client(client_id, data_partition, args)
+
+    # Perform data condensation
+    client.run_data_condensation(r)
+
+def client_compute_Rkc(client_id, args_dict, r):
+    # Reconstruct args
+    args = ARGS.from_dict(args_dict)
+    args.device = torch.device(args.device)
+
+    # Create client instance
     client = Client(client_id, None, args)
-    client.load_synthetic_data(r)
-    client.calculate_and_save_R_logits(r)
+
+    # Only calculate and save Rkc
+    client.run_Rkc(r)
 
 def aggregate_logits(client_ids, num_classes, v_r, args, r):
     """
@@ -219,4 +250,5 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     print(f"Server: Aggregated {v_r} logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
+    multiprocessing.set_start_method('spawn')
     simulate(rounds=20)
