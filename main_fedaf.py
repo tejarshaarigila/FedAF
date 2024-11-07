@@ -1,14 +1,15 @@
 # main_fedaf.py
 
 import os
-import torch
+import copy
+import multiprocessing
 import numpy as np
+import torch
+from torch.utils.data import Subset
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import get_dataset, get_network, get_base_dataset
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import copy
-import multiprocessing
 
 class ARGS:
     def __init__(self):
@@ -21,14 +22,14 @@ class ARGS:
         self.logits_dir = '/home/t914a431/logits'
         self.save_image_dir = '/home/t914a431/images'
         self.save_path = '/home/t914a431/result'
-        self.device = 'cpu'  # Use 'cpu' for multiprocessing
+        self.device = 'cpu'
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
-        self.Iteration = 1000
+        self.Iteration = 1000 # Local Steps
         self.lr_img = 1
         self.num_partitions = 5
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.steps = 500
+        self.steps = 500 # Global Steps
         self.loc_cdc = 0.8
         self.loc_lgkm = 0.8
         self.temperature = 2.0
