@@ -249,11 +249,7 @@ class Client:
                 requires_grad=True,
                 device=self.device
             )
-            self.label_syn = torch.tensor(
-                [np.ones(self.ipc) * i for i in range(self.num_classes)],
-                dtype=torch.long,
-                device=self.device
-            ).view(-1)
+            self.label_syn = torch.arange(self.num_classes, dtype=torch.long, device=self.device).repeat_interleave(self.ipc)
 
             initialized_classes = []
 
