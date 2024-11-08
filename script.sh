@@ -1,23 +1,20 @@
 #!/bin/bash
 
 #SBATCH -p intel
-#SBATCH -N 1              # Number of nodes
-#SBATCH -n 1              # Number of tasks
-#SBATCH -c 10             # Total number of CPUs
+#SBATCH -N 1             
+#SBATCH -n 1              
+#SBATCH -c 10             
 #SBATCH --mem=32G     
 #SBATCH -t 48:00:00       
 #SBATCH -J federated_exp
 #SBATCH -o slurm-%j.out
 
-# Set environment variables to control threading
 export OMP_NUM_THREADS=1  
 export MKL_NUM_THREADS=1 
 
-# Python scripts
 PYTHON_FILE_FEDAF="main_fedaf.py"
 PYTHON_FILE_FEDAVG="main_fedavg.py"
 
-# Parameters
 DATASET="CIFAR10"
 MODEL="ConvNet"
 NUM_USERS=5
@@ -25,14 +22,12 @@ ALPHA_DIRICHLET=0.1
 HONESTY_RATIO=1.0
 NUM_ROUNDS=20
 
-# Directories (Ensure these paths are correct and exist)
 DATA_PATH="/home/t914a431/data"
 MODEL_DIR="/home/t914a431/models/${DATASET}/${MODEL}/${NUM_USERS}/${HONESTY_RATIO}/"
 LOGITS_DIR="/home/t914a431/logits"
 SAVE_IMAGE_DIR="/home/t914a431/images"
 SAVE_PATH="/home/t914a431/result"
 
-# Create necessary directories
 mkdir -p "$DATA_PATH"
 mkdir -p "$MODEL_DIR"
 mkdir -p "$LOGITS_DIR"
