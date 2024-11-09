@@ -127,7 +127,10 @@ def simulate(rounds):
                 for client_id in client_ids
             ]
             for future in as_completed(futures):
-                future.result()
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error in client_compute_Vkc: {e}")
 
         # Step 2: Server aggregates V logits and saves aggregated logits for clients
         aggregated_V_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
@@ -140,7 +143,10 @@ def simulate(rounds):
                 for client_id in client_ids
             ]
             for future in as_completed(futures):
-                future.result()
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error in client_data_condensation: {e}")
 
         # Step 4: Clients calculate and save their Rkc logits (after data condensation)
         with ProcessPoolExecutor() as executor:
@@ -149,7 +155,10 @@ def simulate(rounds):
                 for client_id in client_ids
             ]
             for future in as_completed(futures):
-                future.result()
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error in client_compute_Rkc: {e}")
 
         # Step 5: Server aggregates R logits and saves aggregated logits
         aggregated_R_logits = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
@@ -205,7 +214,7 @@ def client_compute_Rkc(client_id, args_dict, r):
     args = ARGS.from_dict(args_dict)
     args.device = torch.device(args.device)
 
-    # Create client instance
+    # Create client instance without a data partition
     client = Client(client_id, None, args)
 
     # Only calculate and save Rkc
@@ -213,36 +222,60 @@ def client_compute_Rkc(client_id, args_dict, r):
 
 def aggregate_logits(client_ids, num_classes, v_r, args, r):
     """
-    Aggregates class-wise logits from all clients.
+    Aggregates class-wise logits from all clients into a single Rc tensor of shape [num_classes,].
+
+    Args:
+        client_ids (list): List of client IDs.
+        num_classes (int): Number of classes.
+        v_r (str): Type of logits ('V' or 'R').
+        args (ARGS): Argument parser containing configurations.
+        r (int): Current round number.
+
+    Returns:
+        torch.Tensor: Aggregated logits Rc of shape [num_classes,].
     """
-    aggregated_logits = [torch.zeros(num_classes, device=args.device) for _ in range(num_classes)]
-    count = [0 for _ in range(num_classes)]
+    aggregated_logits = torch.zeros(num_classes, device=args.device)
+    count = torch.zeros(num_classes, device=args.device)
 
     for client_id in client_ids:
         client_logit_path = os.path.join(args.logits_dir, f'Client_{client_id}', f'Round_{r}')
         for c in range(num_classes):
             client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
             if os.path.exists(client_Vkc_path):
-                client_logit = torch.load(client_Vkc_path, map_location=args.device)
-                if not torch.all(client_logit == 0):
-                    aggregated_logits[c] += client_logit
-                    count[c] += 1
+                try:
+                    client_logit = torch.load(client_Vkc_path, map_location=args.device)
+                    if isinstance(client_logit, torch.Tensor):
+                        if client_logit.numel() == num_classes:
+                            aggregated_logits += client_logit
+                            count[c] += 1
+                        else:
+                            print(f"Server: Client {client_id} logits for class {c} have incorrect number of elements. Expected {num_classes}, got {client_logit.numel()}. Skipping.")
+                    else:
+                        print(f"Server: Client {client_id} logits for class {c} are not tensors. Skipping.")
+                except Exception as e:
+                    print(f"Server: Failed to load logits for Client {client_id}, Class {c} - {e}")
             else:
                 print(f"Server: Client {client_id} has no logits for class {c}. Skipping.")
 
-    # Average the logits
-    for c in range(num_classes):
-        if count[c] > 0:
-            aggregated_logits[c] /= count[c]
-        else:
-            aggregated_logits[c] = torch.zeros(num_classes, device=args.device)  # Default if no clients have data for class c
+    # Avoid division by zero
+    count = torch.where(count == 0, torch.ones_like(count), count)
 
-    print(f"Server: Aggregated {v_r} logits computed.")
-    return aggregated_logits
+    # Average the logits
+    Rc = aggregated_logits / count  # [num_classes,]
+
+    print(f"Server: Aggregated {v_r} logits computed with Rc shape {Rc.shape}.")
+
+    return Rc
 
 def save_aggregated_logits(aggregated_logits, args, r, v_r):
     """
     Saves the aggregated logits to a global directory accessible by all clients.
+
+    Args:
+        aggregated_logits (torch.Tensor): Aggregated logits Rc of shape [num_classes,].
+        args (ARGS): Argument parser containing configurations.
+        r (int): Current round number.
+        v_r (str): Type of logits ('V' or 'R').
     """
     logits_dir = os.path.join(args.logits_dir, 'Global')
     os.makedirs(logits_dir, exist_ok=True)
