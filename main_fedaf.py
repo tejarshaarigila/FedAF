@@ -222,7 +222,7 @@ def client_compute_Rkc(client_id, args_dict, r):
 
 def aggregate_logits(client_ids, num_classes, v_r, args, r):
     """
-    Aggregates class-wise logits from all clients into a list of tensors, each of shape [num_classes,].
+    Aggregates class-wise logits from all clients into a single Rc tensor of shape [num_classes,].
 
     Args:
         client_ids (list): List of client IDs.
@@ -232,12 +232,10 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
         r (int): Current round number.
 
     Returns:
-        list of torch.Tensor: Aggregated logits Rc_list, where each Rc_list[c] is a tensor of shape [num_classes,].
+        torch.Tensor: Aggregated logits Rc of shape [num_classes,].
     """
-    # Initialize a list to store summed logits per class
-    summed_logits = [torch.zeros(num_classes, device=args.device) for _ in range(num_classes)]
-    # Initialize a list to count the number of contributions per class
-    counts = [0 for _ in range(num_classes)]
+    aggregated_logits = torch.zeros(num_classes, device=args.device)
+    count = torch.zeros(num_classes, device=args.device)
 
     for client_id in client_ids:
         client_logit_path = os.path.join(args.logits_dir, f'Client_{client_id}', f'Round_{r}')
@@ -248,8 +246,8 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
                     client_logit = torch.load(client_Vkc_path, map_location=args.device)  # Removed weights_only=True
                     if isinstance(client_logit, torch.Tensor):
                         if client_logit.numel() == num_classes:
-                            summed_logits[c] += client_logit
-                            counts[c] += 1
+                            aggregated_logits += client_logit
+                            count[c] += 1
                         else:
                             print(f"Server: Client {client_id} logits for class {c} have incorrect number of elements. Expected {num_classes}, got {client_logit.numel()}. Skipping.")
                     else:
@@ -259,26 +257,22 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
             else:
                 print(f"Server: Client {client_id} has no logits for class {c}. Skipping.")
 
-    # Average the logits
-    Rc_list = []
-    for c in range(num_classes):
-        if counts[c] > 0:
-            Rc = summed_logits[c] / counts[c]
-            Rc_list.append(Rc)
-        else:
-            Rc = torch.zeros(num_classes, device=args.device)  # Default if no clients have data for class c
-            Rc_list.append(Rc)
-            print(f"Server: No logits aggregated for class {c}. Initialized Rc[{c}] with zeros.")
+    # Avoid division by zero
+    count = torch.where(count == 0, torch.ones_like(count), count)
 
-    print(f"Server: Aggregated {v_r} logits computed.")
-    return Rc_list
+    # Average the logits
+    Rc = aggregated_logits / count  # [num_classes,]
+
+    print(f"Server: Aggregated {v_r} logits computed with Rc shape {Rc.shape}.")
+
+    return Rc
 
 def save_aggregated_logits(aggregated_logits, args, r, v_r):
     """
     Saves the aggregated logits to a global directory accessible by all clients.
 
     Args:
-        aggregated_logits (list of torch.Tensor): Aggregated logits Rc_list of shape [num_classes,] for each class.
+        aggregated_logits (torch.Tensor): Aggregated logits Rc of shape [num_classes,].
         args (ARGS): Argument parser containing configurations.
         r (int): Current round number.
         v_r (str): Type of logits ('V' or 'R').
@@ -286,7 +280,7 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     logits_dir = os.path.join(args.logits_dir, 'Global')
     os.makedirs(logits_dir, exist_ok=True)
     global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
-    torch.save(aggregated_logits, global_logits_path)  # Saving list of tensors
+    torch.save(aggregated_logits, global_logits_path)  # Saving single tensor
     print(f"Server: Aggregated {v_r} logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
