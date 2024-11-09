@@ -15,42 +15,73 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
     Args:
         model (torch.nn.Module): The global model to train.
         train_loader (DataLoader): DataLoader for training data.
-        Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients.
+        Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients (shape: [num_classes,]).
         num_classes (int): Number of classes.
+        lambda_glob (float): Regularization parameter for LGKM loss.
+        temperature (float): Temperature for softmax scaling.
         device (torch.device): Device to train on.
         num_epochs (int): Number of training epochs.
     """
-    model.train()  # Set the model to training mode
-    criterion_ce = nn.CrossEntropyLoss()  # Define the loss function
-    optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
+    model.to(device)
+    model.train()
+    criterion_ce = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=0.001)
 
-    T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
+    epsilon = 1e-8
+    Rc_smooth = Rc_tensor + epsilon  # [num_classes,]
 
     for epoch in range(num_epochs):
-
         running_loss = 0.0
+        running_ce_loss = 0.0
+        running_lgkm_loss = 0.0
+
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
 
-            optimizer.zero_grad()  # Zero the gradients at the start of each iteration
+            outputs = model(inputs)  # [batch_size, num_classes]
+            loss_ce = criterion_ce(outputs, labels)
 
-            outputs = model(inputs)
-            loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
+            T = torch.zeros(num_classes, device=device)
 
-            # Compute LGKM loss
-            kl_div1 = nn.functional.kl_div(Rc_tensor.log(), T_tensor, reduction='batchmean')
-            kl_div2 = nn.functional.kl_div(T_tensor.log(), Rc_tensor, reduction='batchmean')
-            loss_lgkm = (kl_div1 + kl_div2) / 2
+            for c in range(num_classes):
+                mask = labels == c  # [batch_size,]
+                if mask.sum() > 0:
+                    # Average logits for class c in the current batch
+                    avg_logit = outputs[mask].mean(dim=0)  # [num_classes,]
+                    # Apply softmax with temperature
+                    T[c] = nn.functional.softmax(avg_logit / temperature, dim=0)
+                else:
+                    # If class c is not present in the batch, initialize with uniform distribution
+                    T[c] = torch.full((num_classes,), 1.0 / num_classes, device=device)
 
-            # Combine the losses
-            combined_loss = loss_ce + lambda_glob * loss_lgkm
+            # Compute LGKM loss using KL Divergence
+            # Rc_smooth: [num_classes,]
+            # T: [num_classes,]
+            # Ensure both are probability distributions
+            Rc_normalized = Rc_smooth / Rc_smooth.sum()
+            T_normalized = T / T.sum()
 
-            combined_loss.backward()  # Compute gradients
-            optimizer.step()  # Update model parameters
+            kl_div1 = nn.functional.kl_div(T_normalized.log(), Rc_normalized, reduction='batchmean')
+            kl_div2 = nn.functional.kl_div(Rc_normalized.log(), T_normalized, reduction='batchmean')
+            loss_lgkm = (kl_div1 + kl_div2) / 2  # Scalar
 
-            running_loss += loss_ce.item()
 
-        print(f'Server: Epoch {epoch + 1}, Loss = CE Loss: {running_loss / len(train_loader):.4f} + Lambda: {lambda_glob} * LGKM Loss: {loss_lgkm.item():.4f} = {(running_loss / len(train_loader) + (lambda_glob * loss_lgkm.item())):.4f}')
+            # Combine losses
+            combined_loss = loss_ce + lambda_glob * loss_lgkm  # Scalar
+
+            combined_loss.backward()
+            optimizer.step()
+
+            running_loss += combined_loss.item()
+            running_ce_loss += loss_ce.item()
+            running_lgkm_loss += loss_lgkm.item()
+
+        avg_loss = running_loss / len(train_loader)
+        avg_ce_loss = running_ce_loss / len(train_loader)
+        avg_lgkm_loss = running_lgkm_loss / len(train_loader)
+
+        print(f'Server: Epoch {epoch + 1}, Total Loss: {avg_loss:.4f}, CE Loss: {avg_ce_loss:.4f}, LGKM Loss: {avg_lgkm_loss:.4f}')
         running_loss = 0.0
 
 def evaluate_model(model, test_loader, device):
@@ -75,38 +106,6 @@ def evaluate_model(model, test_loader, device):
 
     accuracy = 100 * correct / total
     print(f'Accuracy of the network on test images: {accuracy:.2f}%')
-
-def compute_T(model, synthetic_dataset, num_classes, temperature, device):
-    """
-    Computes the class-wise averaged soft labels T from the model's predictions on the synthetic data.
-    """
-    model.eval()
-    class_logits_sum = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
-    class_counts = [0 for _ in range(num_classes)]
-
-    synthetic_loader = DataLoader(synthetic_dataset, batch_size=256, shuffle=False, num_workers=4)
-
-    with torch.no_grad():
-        for inputs, labels in synthetic_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)  # [batch_size, num_classes]
-            for i in range(inputs.size(0)):
-                label = labels[i].item()
-                class_logits_sum[label] += outputs[i]
-                class_counts[label] += 1
-
-    T_list = []
-    for c in range(num_classes):
-        if class_counts[c] > 0:
-            avg_logit = class_logits_sum[c] / class_counts[c]
-            t_c = nn.functional.softmax(avg_logit / temperature, dim=0)
-            T_list.append(t_c)
-        else:
-            # Initialize with uniform distribution if no data for class c
-            T_list.append(torch.full((num_classes,), 1.0 / num_classes, device=device))
-
-    T_tensor = torch.stack(T_list)  # [num_classes, num_classes]
-    return T_tensor
 
 def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc, method, hratio, temperature, num_epochs, device="cpu"):
     """
@@ -156,16 +155,20 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
     else:
         raise ValueError(f"Unsupported dataset: {data}")
 
-    test_loader = DataLoader(dst_test, batch_size=256, shuffle=False)
+    test_loader = DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=4)
 
     # Load aggregated class-wise soft labels Rc
     global_probs_path = os.path.join('/home/t914a431/logits', 'Global', f'Round{round_num}_Global_Rc.pt')
     if os.path.exists(global_probs_path):
         Rc = torch.load(global_probs_path, map_location=device)
-        print("Server: Loaded aggregated class-wise soft labels R(c).")
+        # Ensure Rc is of shape [num_classes,]
+        if Rc.dim() == 1 and Rc.size(0) == num_classes:
+            print(f"Server: Loaded aggregated class-wise soft labels R(c) with shape {Rc.shape}.")
+        else:
+            raise ValueError(f"Rc has incorrect shape: {Rc.shape}. Expected [{num_classes}].")
     else:
         print("Server: No aggregated class-wise soft labels found. Initializing R(c) with zeros.")
-        Rc = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+        Rc = torch.zeros(num_classes, device=device)
 
     all_images = []
     all_labels = []
@@ -206,14 +209,14 @@ def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc,
 
     # Create training dataset and loader
     final_dataset = TensorDataset(all_images, all_labels)
-    train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True)
+    train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True, num_workers=4)
 
     # Load the latest global model
     print("Server: Loading the latest global model.")
     net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
     net.train()
 
-    Rc_tensor = torch.stack(Rc).to(device)  # Shape: [num_classes, num_classes]
+    Rc_tensor = Rc.to(device)  # Shape: [num_classes,]
 
     # Train the global model
     print("Server: Starting global model training.")
