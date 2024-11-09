@@ -25,11 +25,6 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
     optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
 
     T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
-    
-    # Compute LGKM loss
-    kl_div1 = nn.functional.kl_div(Rc_tensor.log(), T_tensor, reduction='batchmean')
-    kl_div2 = nn.functional.kl_div(T_tensor.log(), Rc_tensor, reduction='batchmean')
-    loss_lgkm = (kl_div1 + kl_div2) / 2
 
     for epoch in range(num_epochs):
 
@@ -41,6 +36,11 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
 
             outputs = model(inputs)
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
+
+            # Compute LGKM loss
+            kl_div1 = nn.functional.kl_div(Rc_tensor.log(), T_tensor, reduction='batchmean')
+            kl_div2 = nn.functional.kl_div(T_tensor.log(), Rc_tensor, reduction='batchmean')
+            loss_lgkm = (kl_div1 + kl_div2) / 2
 
             # Combine the losses
             combined_loss = loss_ce + lambda_glob * loss_lgkm
@@ -86,13 +86,14 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
 
     synthetic_loader = DataLoader(synthetic_dataset, batch_size=256, shuffle=False, num_workers=4)
 
-    for inputs, labels in synthetic_loader:
-        inputs, labels = inputs.to(device), labels.to(device)
-        outputs = model(inputs)  # [batch_size, num_classes]
-        for i in range(inputs.size(0)):
-            label = labels[i].item()
-            class_logits_sum[label] += outputs[i]
-            class_counts[label] += 1
+    with torch.no_grad():
+        for inputs, labels in synthetic_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)  # [batch_size, num_classes]
+            for i in range(inputs.size(0)):
+                label = labels[i].item()
+                class_logits_sum[label] += outputs[i]
+                class_counts[label] += 1
 
     T_list = []
     for c in range(num_classes):
