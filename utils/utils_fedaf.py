@@ -307,3 +307,22 @@ def ensure_directory_exists(path):
     """
     if not os.path.exists(path):
         os.makedirs(path)
+
+def save_aggregated_logits(aggregated_logits, args, r, v_r):
+    """
+    Saves the aggregated logits to a global directory accessible by all clients.
+
+    Args:
+        aggregated_logits (torch.Tensor): Aggregated logits Rc of shape [num_classes,].
+        args (ARGS): Argument parser containing configurations.
+        r (int): Current round number.
+        v_r (str): Type of logits ('V' for pre-condensation, 'R' for post-condensation).
+    """
+    try:
+        logits_dir = os.path.join(args.logits_dir, 'Global')
+        os.makedirs(logits_dir, exist_ok=True)
+        global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
+        torch.save(aggregated_logits, global_logits_path)  # Saving single tensor
+        logger.info(f"Aggregated {v_r} logits saved to {global_logits_path}.")
+    except Exception as e:
+        logger.error(f"Error saving aggregated logits: {e}")
