@@ -11,6 +11,8 @@ from utils.utils_fedaf import (
     load_latest_model,
     calculate_logits_labels,
     compute_swd,
+    get_base_dataset,
+    ensure_directory_exists
 )
 import logging
 
@@ -221,13 +223,23 @@ class Client:
     def load_global_aggregated_logits(self, r):
         """
         Loads the global aggregated logits from the server's global directory for the current round.
+
+        Args:
+            r (int): Current round number.
+
+        Returns:
+            list of torch.Tensor: Aggregated logits Rc_list, where each Rc_list[c] is a tensor of shape [num_classes,].
         """
         global_logits_filename = f'Round{r}_Global_Vc.pt'
         global_logits_path = os.path.join(self.args.logits_dir, 'Global', global_logits_filename)
         if os.path.exists(global_logits_path):
             try:
-                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)
-                logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
+                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)  # List of tensors
+                if isinstance(aggregated_tensors, list) and len(aggregated_tensors) == self.num_classes:
+                    logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
+                else:
+                    logger.error(f"Client {self.client_id}: Aggregated logits format incorrect. Expected list of length {self.num_classes}.")
+                    aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
                 aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
@@ -331,6 +343,7 @@ class Client:
             iteration (int): Current iteration number.
             mean (list): Mean values for normalization.
             std (list): Standard deviation values for normalization.
+            r (int): Current round number.
         """
         try:
             save_name = os.path.join(
@@ -430,7 +443,7 @@ class Client:
                     mean_feature_syn = torch.mean(output_syn, dim=0)
 
                     # Retrieve real images DataLoader for class c
-                    real_loader = self.get_images_loader(c, max_batch_size=256)
+                    real_loader = self.get_images_loader(c, max_batch_size=min(self.ipc, 256))
                     if real_loader is not None:
                         try:
                             # Get the first (and only) batch
