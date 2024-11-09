@@ -405,7 +405,7 @@ class Client:
         """
         logger.info(f"Client {self.client_id}: Starting synthetic data training.")
         try:
-            optimizer_img = optim.SGD([self.image_syn], lr=self.args.lr_img, momentum=0.5)
+            optimizer_img = optim.SGD([self.image_syn], lr=self.args.lr_img)
             logger.info("[X] Data Condensation begins...")
 
             for it in range(1, self.args.Iteration + 1):
