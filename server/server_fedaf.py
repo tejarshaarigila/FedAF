@@ -24,15 +24,16 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
     criterion_ce = nn.CrossEntropyLoss()  # Define the loss function
     optimizer = optim.SGD(model.parameters(), lr=0.001)  # Optimizer
 
-    epsilon = 1e-8
-    Rc_smooth = Rc_tensor + epsilon  # Smooth Rc_tensor to avoid log(0)
+    T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
+    
+    # Compute LGKM loss
+    kl_div1 = nn.functional.kl_div(Rc_tensor.log(), T_tensor, reduction='batchmean')
+    kl_div2 = nn.functional.kl_div(T_tensor.log(), Rc_tensor, reduction='batchmean')
+    loss_lgkm = (kl_div1 + kl_div2) / 2
 
     for epoch in range(num_epochs):
 
         running_loss = 0.0
-        # Compute T
-        T_tensor = compute_T(model, train_loader.dataset, num_classes, temperature, device)
-        T_smooth = T_tensor + epsilon  # Smooth T_tensor to avoid log(0)
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -40,11 +41,6 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
 
             outputs = model(inputs)
             loss_ce = criterion_ce(outputs, labels)  # Compute Cross-Entropy loss
-
-            # Compute LGKM loss
-            kl_div1 = nn.functional.kl_div(Rc_smooth.log(), T_smooth, reduction='batchmean')
-            kl_div2 = nn.functional.kl_div(T_smooth.log(), Rc_smooth, reduction='batchmean')
-            loss_lgkm = (kl_div1 + kl_div2) / 2
 
             # Combine the losses
             combined_loss = loss_ce + lambda_glob * loss_lgkm
@@ -88,16 +84,15 @@ def compute_T(model, synthetic_dataset, num_classes, temperature, device):
     class_logits_sum = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
     class_counts = [0 for _ in range(num_classes)]
 
-    synthetic_loader = DataLoader(synthetic_dataset, batch_size=256, shuffle=False)
+    synthetic_loader = DataLoader(synthetic_dataset, batch_size=256, shuffle=False, num_workers=4)
 
-    with torch.no_grad():
-        for inputs, labels in synthetic_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)  # [batch_size, num_classes]
-            for i in range(inputs.size(0)):
-                label = labels[i].item()
-                class_logits_sum[label] += outputs[i]
-                class_counts[label] += 1
+    for inputs, labels in synthetic_loader:
+        inputs, labels = inputs.to(device), labels.to(device)
+        outputs = model(inputs)  # [batch_size, num_classes]
+        for i in range(inputs.size(0)):
+            label = labels[i].item()
+            class_logits_sum[label] += outputs[i]
+            class_counts[label] += 1
 
     T_list = []
     for c in range(num_classes):
