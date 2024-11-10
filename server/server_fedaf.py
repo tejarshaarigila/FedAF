@@ -43,32 +43,25 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
             loss_ce = criterion_ce(outputs, labels)
 
             T = torch.zeros(num_classes, device=device)
-
+            
             for c in range(num_classes):
                 mask = labels == c  # [batch_size,]
                 if mask.sum() > 0:
-                    # Average logits for class c in the current batch
                     avg_logit = outputs[mask].mean(dim=0)  # [num_classes,]
-                    # Apply softmax with temperature
-                    T[c] = nn.functional.softmax(avg_logit / temperature, dim=0)
+                    T[c] = avg_logit[c]
                 else:
-                    # If class c is not present in the batch, initialize with uniform distribution
-                    T[c] = torch.full((num_classes,), 1.0 / num_classes, device=device)
+                    T[c] = epsilon
 
             # Compute LGKM loss using KL Divergence
-            # Rc_smooth: [num_classes,]
-            # T: [num_classes,]
-            # Ensure both are probability distributions
             Rc_normalized = Rc_smooth / Rc_smooth.sum()
             T_normalized = T / T.sum()
 
             kl_div1 = nn.functional.kl_div(T_normalized.log(), Rc_normalized, reduction='batchmean')
             kl_div2 = nn.functional.kl_div(Rc_normalized.log(), T_normalized, reduction='batchmean')
-            loss_lgkm = (kl_div1 + kl_div2) / 2  # Scalar
-
+            loss_lgkm = (kl_div1 + kl_div2) / 2
 
             # Combine losses
-            combined_loss = loss_ce + lambda_glob * loss_lgkm  # Scalar
+            combined_loss = loss_ce + lambda_glob * loss_lgkm
 
             combined_loss.backward()
             optimizer.step()
