@@ -38,42 +38,47 @@ def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temper
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-
+        
             outputs = model(inputs)  # [batch_size, num_classes]
             loss_ce = criterion_ce(outputs, labels)
-
+        
+            soft_labels = nn.functional.softmax(outputs / temperature, dim=1)  # [batch_size, num_classes]
+        
+            # Initialize T
             T = torch.zeros(num_classes, device=device)
-            
+        
+            # Aggregate soft labels class-wise
             for c in range(num_classes):
                 mask = labels == c  # [batch_size,]
                 if mask.sum() > 0:
-                    avg_logit = outputs[mask].mean(dim=0)  # [num_classes,]
-                    T[c] = avg_logit[c]
+                    T[c] = soft_labels[mask].mean(dim=0)[c]
                 else:
-                    T[c] = epsilon
+                    T[c] = 1.0 / num_classes
 
-            # Compute LGKM loss using KL Divergence
+            T = T + epsilon
+        
+            # LGKM loss using KL Divergence
             Rc_normalized = Rc_smooth / Rc_smooth.sum()
             T_normalized = T / T.sum()
-
-            kl_div1 = nn.functional.kl_div(T_normalized.log(), Rc_normalized, reduction='batchmean')
-            kl_div2 = nn.functional.kl_div(Rc_normalized.log(), T_normalized, reduction='batchmean')
+        
+            kl_div1 = nn.functional.kl_div(T_normalized.log(), Rc_normalized, reduction='mean')
+            kl_div2 = nn.functional.kl_div(Rc_normalized.log(), T_normalized, reduction='mean')
             loss_lgkm = (kl_div1 + kl_div2) / 2
-
+        
             # Combine losses
             combined_loss = loss_ce + lambda_glob * loss_lgkm
-
+        
             combined_loss.backward()
             optimizer.step()
-
+        
             running_loss += combined_loss.item()
             running_ce_loss += loss_ce.item()
             running_lgkm_loss += loss_lgkm.item()
-
+        
         avg_loss = running_loss / len(train_loader)
         avg_ce_loss = running_ce_loss / len(train_loader)
         avg_lgkm_loss = running_lgkm_loss / len(train_loader)
-
+        
         print(f'Server: Epoch {epoch + 1}, Total Loss: {avg_loss:.4f}, CE Loss: {avg_ce_loss:.4f}, LGKM Loss: {avg_lgkm_loss:.4f}')
         running_loss = 0.0
 
