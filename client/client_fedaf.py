@@ -221,32 +221,23 @@ class Client:
             raise e
 
     def load_global_aggregated_logits(self, r):
-        """
-        Loads the global aggregated logits from the server's global directory for the current round.
-
-        Args:
-            r (int): Current round number.
-
-        Returns:
-            list of torch.Tensor: Aggregated logits Rc_list, where each Rc_list[c] is a tensor of shape [num_classes,].
-        """
         global_logits_filename = f'Round{r}_Global_Vc.pt'
         global_logits_path = os.path.join(self.args.logits_dir, 'Global', global_logits_filename)
         if os.path.exists(global_logits_path):
             try:
-                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)  # List of tensors
-                if isinstance(aggregated_tensors, list) and len(aggregated_tensors) == self.num_classes:
+                Rc = torch.load(global_logits_path, map_location=self.device)  # Single tensor
+                if Rc.shape == (self.num_classes,):
                     logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
                 else:
-                    logger.error(f"Client {self.client_id}: Aggregated logits format incorrect. Expected list of length {self.num_classes}.")
-                    aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
+                    logger.error(f"Client {self.client_id}: Aggregated logits format incorrect. Expected shape ({self.num_classes},).")
+                    Rc = torch.zeros(self.num_classes, device=self.device)
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
-                aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
+                Rc = torch.zeros(self.num_classes, device=self.device)
         else:
             logger.warning(f"Client {self.client_id}: Aggregated logits not found at {global_logits_path}. Initializing with zeros.")
-            aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
-        return aggregated_tensors
+            Rc = torch.zeros(self.num_classes, device=self.device)
+        return Rc
 
     def initialize_synthetic_data(self, r):
         """
