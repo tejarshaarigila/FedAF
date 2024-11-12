@@ -41,14 +41,10 @@ echo "Alpha (Dirichlet): $ALPHA_DIRICHLET"
 echo "Honesty Ratio: $HONESTY_RATIO"
 echo "========================================"
 
-echo "Pre-downloading the dataset..."
-srun -n 1 -c 1 python3 -c "from torchvision import datasets; datasets.${DATASET}(root='${DATA_PATH}', train=True, download=True); datasets.${DATASET}(root='${DATA_PATH}', train=False, download=True)"
-
-if [ $? -ne 0 ]; then
-    echo "Error: Dataset download failed."
-    exit 1
+if [ ! -d "${DATA_PATH}/${DATASET}" ]; then
+    echo "Pre-downloading the dataset..."
+    srun -n 1 -c 1 python3 -c "from torchvision import datasets; datasets.${DATASET}(root='${DATA_PATH}', train=True, download=True); datasets.${DATASET}(root='${DATA_PATH}', train=False, download=True)"
 fi
-echo "Dataset downloaded successfully."
 
 echo "----------------------------------------"
 echo "Running FedAF"
