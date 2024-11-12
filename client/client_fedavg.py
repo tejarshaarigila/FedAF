@@ -1,5 +1,3 @@
-# client_fedavg.py
-
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -27,7 +25,8 @@ class Client:
             model=self.args.model,
             channel=channel,
             num_classes=num_classes,
-            im_size=im_size
+            im_size=im_size,
+            device=self.args.device  # Ensure device is passed correctly
         ).to(self.args.device)
         
         logger.info("Local model initialized for client %d.", self.client_id)
@@ -55,6 +54,9 @@ class Client:
                 epoch_loss += loss.item()
 
             avg_loss = epoch_loss / len(self.train_loader)
-            logger.info("Client %d completed epoch %d with average loss: %.4f", self.client_id, epoch + 1, avg_loss)
+            logger.info(
+                "Client %d completed epoch %d with average loss: %.4f",
+                self.client_id, epoch + 1, avg_loss
+            )
 
         return self.local_model.state_dict()
