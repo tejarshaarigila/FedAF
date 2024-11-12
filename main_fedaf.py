@@ -13,7 +13,7 @@ from utils.utils_fedaf import get_dataset, get_network, get_base_dataset, save_a
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'CIFAR10'  # or 'MNIST'
+        self.dataset = 'MNIST'  # or 'MNIST'
         self.model = 'ConvNet'
         self.model_name = self.model
         self.method = 'DM'
