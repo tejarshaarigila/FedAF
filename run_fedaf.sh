@@ -4,17 +4,15 @@
 #SBATCH -N 1             
 #SBATCH -n 1              
 #SBATCH -c 10             
-#SBATCH --mem=32G     
-#SBATCH -t 48:00:00       
-#SBATCH -J federated_exp
-#SBATCH -o slurm-%j.out
+#SBATCH --mem=16G     
+#SBATCH -t 00:00:00       
+#SBATCH -J fedaf_exp
+#SBATCH -o slurm-fedaf-%j.out
 
 export OMP_NUM_THREADS=1  
 export MKL_NUM_THREADS=1 
 
 PYTHON_FILE_FEDAF="main_fedaf.py"
-PYTHON_FILE_FEDAVG="main_fedavg.py"
-
 DATASET="CIFAR10"
 MODEL="ConvNet"
 NUM_USERS=5
@@ -35,7 +33,7 @@ mkdir -p "$SAVE_IMAGE_DIR"
 mkdir -p "$SAVE_PATH"
 
 echo "========================================"
-echo "Starting Federated Learning Experiments"
+echo "Starting FedAF Experiment"
 echo "Dataset: $DATASET"
 echo "Model: $MODEL"
 echo "Number of Clients: $NUM_USERS"
@@ -58,26 +56,12 @@ echo "----------------------------------------"
 
 srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAF
 
-status_fedaf=$?
-if [ $status_fedaf -ne 0 ]; then
+if [ $? -ne 0 ]; then
     echo "Error: FedAF script failed."
     exit 1
 fi
 echo "FedAF script completed successfully."
 
-echo "----------------------------------------"
-echo "Running FedAvg"
-echo "----------------------------------------"
-
-srun -n 1 -c 10 python3 $PYTHON_FILE_FEDAVG
-
-status_fedavg=$?
-if [ $status_fedavg -ne 0 ]; then
-    echo "Error: FedAvg script failed."
-    exit 1
-fi
-echo "FedAvg script completed successfully."
-
 echo "========================================"
-echo "Federated Learning Experiments Completed"
+echo "FedAF Experiment Completed"
 echo "========================================"
