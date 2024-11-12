@@ -9,6 +9,7 @@ import numpy as np
 import logging
 from utils.networks import MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11BN, ResNet18, ResNet18BN_AP, ResNet18BN
 import copy
+import random
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -51,14 +52,39 @@ def load_data(dataset, alpha, num_clients):
     client_indices = partition_data(targets, num_clients, alpha)
     logger.info("Data partitioned among %d clients.", num_clients)
 
-    client_datasets = [Subset(full_train_dataset, indices) for indices in client_indices]
+    # Return the full dataset and client indices
     test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
 
-    return client_datasets, test_loader
+    return full_train_dataset, client_indices, test_loader
+
+def load_client_data(client_id, args):
+    """Load the data for a specific client based on client_id."""
+    # Load the full training dataset
+    if args.dataset == 'CIFAR10':
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+        full_train_dataset = datasets.CIFAR10(root='data', train=True, download=True, transform=transform)
+    elif args.dataset == 'MNIST':
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+        full_train_dataset = datasets.MNIST(root='data', train=True, download=True, transform=transform)
+    elif args.dataset == 'CelebA':
+        transform = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
+        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform)
+    else:
+        raise ValueError("Unsupported dataset.")
+
+    # Ensure the same partitioning is applied
+    targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
+    client_indices = partition_data(targets, args.num_clients, args.alpha)
+
+    # Get the indices for the specified client
+    indices = client_indices[client_id]
+
+    # Create a Subset for the client
+    client_dataset = Subset(full_train_dataset, indices)
+    return client_dataset
 
 def partition_data(targets, num_clients, alpha):
     """Partition data using Dirichlet distribution."""
-    np.random.seed(42)
     num_classes = np.max(targets) + 1
     client_indices = [[] for _ in range(num_clients)]
     for c in range(num_classes):
