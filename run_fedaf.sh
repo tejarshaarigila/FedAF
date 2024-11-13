@@ -9,8 +9,6 @@
 #SBATCH -J fedaf_exp
 #SBATCH -o slurm-fedaf-%j.out
 
-export OMP_NUM_THREADS=1  
-export MKL_NUM_THREADS=1 
 
 PYTHON_FILE_FEDAF="main_fedaf.py"
 DATASET="MNIST"
