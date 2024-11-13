@@ -4,7 +4,7 @@
 #SBATCH -N 1             
 #SBATCH -n 1              
 #SBATCH -c 10             
-#SBATCH --mem=16G     
+#SBATCH --mem=8G     
 #SBATCH -t 00:00:00       
 #SBATCH -J fedavg_exp
 #SBATCH -o slurm-fedavg-%j.out
