@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import Event, Manager
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils_fedaf import get_dataset, get_network, get_base_dataset, save_aggregated_logits, ensure_directory_exists
+from utils.utils_fedaf import get_network, get_base_dataset, save_aggregated_logits, ensure_directory_exists
 
 class ARGS:
     def __init__(self):
