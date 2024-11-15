@@ -2,11 +2,11 @@
 
 import os
 import copy
+import time
 import numpy as np
 import torch
 from torch.utils.data import Subset
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing import Event, Manager
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import get_network, get_base_dataset, save_aggregated_logits, ensure_directory_exists
@@ -193,7 +193,7 @@ def client_full_round(client_id, data_partition_indices, args_dict, r, base_data
 
 def aggregate_logits(client_ids, num_classes, v_r, args, r):
     """
-    Aggregates class-wise logits from all clients into a single Rc tensor of shape [num_classes,].
+    Aggregates class-wise logits from all clients into a tensor of shape [num_classes,].
 
     Args:
         client_ids (list): List of client IDs.
@@ -217,7 +217,8 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
                     client_logit = torch.load(client_Vkc_path, map_location=args.device)
                     if isinstance(client_logit, torch.Tensor):
                         if client_logit.numel() == num_classes:
-                            aggregated_logits += client_logit
+                            # Accumulate the logit value at index c
+                            aggregated_logits[c] += client_logit[c]
                             count[c] += 1
                         else:
                             print(f"Server: Client {client_id} logits for class {c} have incorrect number of elements. Expected {num_classes}, got {client_logit.numel()}. Skipping.")
@@ -231,8 +232,8 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
     # Avoid division by zero
     count = torch.where(count == 0, torch.ones_like(count), count)
 
-    # Average the logits
-    Rc = aggregated_logits / count  # [num_classes,]
+    # Average the logits per class
+    Rc = aggregated_logits / count  # Shape: [num_classes,]
 
     print(f"Server: Aggregated {v_r} logits computed with Rc shape {Rc.shape}.")
 
