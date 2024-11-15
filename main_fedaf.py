@@ -214,6 +214,7 @@ def client_data_condensation_and_Rkc(client_id, data_partition_indices, args_dic
 
     # Load the model (if necessary)
     client.model = client.load_global_model()
+    client.resample_model(client.model)
 
     # Wait for the server to aggregate Vc
     print(f"Client {client_id} is waiting for global Vc aggregation.")
