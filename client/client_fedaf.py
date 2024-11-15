@@ -79,7 +79,24 @@ class Client:
 
         # Save synthetic data
         self.save_synthetic_data(r)
-
+        
+        def dynamic_lambda_cdc(self, current_iter, total_iters):
+        """
+        Dynamically adjusts the lambda_cdc value based on the current iteration.
+    
+        Args:
+            current_iter (int): The current iteration number.
+            total_iters (int): The total number of iterations.
+    
+        Returns:
+            float: The dynamically adjusted lambda_cdc value.
+        """
+        # Example: Linear schedule decreasing lambda_cdc over time
+        # initial_lambda_cdc = self.args.loc_cdc  # Initial value from args
+        # lambda_cdc = initial_lambda_cdc * (1 - current_iter / total_iters)
+        lambda_cdc = 0.8
+        return lambda_cdc
+ 
     def run_Rkc(self, r):
         """
         Runs the computation of Rkc logits.
