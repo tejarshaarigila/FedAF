@@ -112,15 +112,9 @@ def simulate(rounds):
     args_dict = copy.deepcopy(vars(args))
     args_dict['device'] = str(args.device)  # Convert torch.device to string
 
-    # Create an Event object for synchronization
-    aggregation_complete_event = Event()
-
     # Main communication rounds
     for r in range(1, rounds + 1):
         print(f"--- Round {r}/{rounds} ---")
-
-        # Ensure the event is cleared at the start of the round
-        aggregation_complete_event.clear()
 
         # Clients perform all computations in a single function
         with ProcessPoolExecutor() as executor:
@@ -131,14 +125,12 @@ def simulate(rounds):
                     data_partition_indices[client_id],
                     args_dict,
                     r,
-                    base_dataset,
-                    aggregation_complete_event  # Pass the event
+                    base_dataset
                 )
                 for client_id in client_ids
             ]
 
             # Wait for all clients to finish computing Vkc
-            # (In practice, we can proceed as soon as all clients have computed Vkc)
             for future in as_completed(futures):
                 try:
                     future.result()
@@ -149,13 +141,7 @@ def simulate(rounds):
         aggregated_V_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
         save_aggregated_logits(aggregated_V_logits, args, r, 'V')
 
-        # Signal clients that aggregation is complete
-        aggregation_complete_event.set()
-
         # Now clients can proceed with data condensation and computing Rkc
-
-        # Wait for clients to finish the rest of their computations if necessary
-        # In this setup, clients will complete their computations asynchronously
 
         # Server aggregates R logits and saves aggregated logits
         aggregated_R_logits = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
@@ -176,7 +162,7 @@ def simulate(rounds):
             device=args.device,
         )
 
-def client_full_round(client_id, data_partition_indices, args_dict, r, base_dataset, aggregation_complete_event):
+def client_full_round(client_id, data_partition_indices, args_dict, r, base_dataset):
     # Reconstruct args
     args = ARGS.from_dict(args_dict)
     args.device = torch.device(args.device)
@@ -196,7 +182,9 @@ def client_full_round(client_id, data_partition_indices, args_dict, r, base_data
 
     # Wait for the server to aggregate Vc
     print(f"Client {client_id} is waiting for global Vc aggregation.")
-    aggregation_complete_event.wait()
+    global_Vc_path = os.path.join(args.logits_dir, 'Global', f'Round{r}_Global_Vc.pt')
+    while not os.path.exists(global_Vc_path):
+        time.sleep(1)  # Wait for 1 second before checking again
     print(f"Client {client_id} received signal to proceed.")
 
     # Proceed to data condensation and Rkc computation
