@@ -80,7 +80,7 @@ class Client:
         # Save synthetic data
         self.save_synthetic_data(r)
         
-        def dynamic_lambda_cdc(self, current_iter, total_iters):
+    def dynamic_lambda_cdc(self, current_iter, total_iters):
         """
         Dynamically adjusts the lambda_cdc value based on the current iteration.
     
