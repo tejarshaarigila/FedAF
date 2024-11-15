@@ -2,18 +2,18 @@
 
 import os
 import copy
-import multiprocessing
 import numpy as np
 import torch
 from torch.utils.data import Subset
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import Event, Manager
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
 from utils.utils_fedaf import get_dataset, get_network, get_base_dataset, save_aggregated_logits, ensure_directory_exists
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'MNIST'  # or 'MNIST'
+        self.dataset = 'MNIST'  # or 'CIFAR10'
         self.model = 'ConvNet'
         self.model_name = self.model
         self.method = 'DM'
@@ -25,11 +25,11 @@ class ARGS:
         self.device = 'cpu'
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
-        self.Iteration = 1000 # Local Steps
+        self.Iteration = 1000  # Local Steps
         self.lr_img = 1
         self.num_partitions = 5
         self.alpha = 0.1  # Dirichlet distribution parameter
-        self.steps = 500 # Global Steps
+        self.steps = 500  # Global Steps
         self.loc_cdc = 0.8
         self.loc_lgkm = 0.8
         self.temperature = 2.0
@@ -78,89 +78,86 @@ def simulate(rounds):
     os.makedirs(args.logits_dir, exist_ok=True)
     os.makedirs(args.save_image_dir, exist_ok=True)
 
-    # Load and partition the dataset
-    (
-        channel,
-        im_size,
-        num_classes,
-        class_names,
-        mean,
-        std,
-        dst_train,
-        dst_test,
-        testloader,
-    ) = get_dataset(
-        dataset=args.dataset,
-        data_path=args.data_path,
-        num_partitions=args.num_partitions,
-        alpha=args.alpha,
-    )
-    args.channel = channel
-    args.im_size = im_size
-    args.num_classes = num_classes
-    args.class_names = class_names
-    args.mean = mean
-    args.std = std
+    # Load and partition the dataset once
+    base_dataset = get_base_dataset(args.dataset, args.data_path, train=True)
+    labels = np.array(base_dataset.targets)
+    indices = [[] for _ in range(args.num_partitions)]
+
+    # Partitioning logic
+    num_classes = args.num_classes
+    num_partitions = args.num_partitions
+    alpha = args.alpha
+
+    for c in range(num_classes):
+        class_indices = np.where(labels == c)[0]
+        np.random.shuffle(class_indices)
+        proportions = np.random.dirichlet(np.repeat(alpha, num_partitions))
+        proportions = (np.cumsum(proportions) * len(class_indices)).astype(int)[:-1]
+        class_splits = np.split(class_indices, proportions)
+        for idx in range(num_partitions):
+            if idx < len(class_splits):
+                indices[idx].extend(class_splits[idx])
+
+    data_partition_indices = indices  # Use indices directly
 
     # Initialize the global model and save it
     if not os.path.exists(os.path.join(args.model_dir, 'fedaf_global_model_0.pth')):
         print("[+] Initializing Global Model")
         initialize_global_model(args)
 
-    # Prepare client IDs and data partitions
-    client_ids = list(range(len(dst_train)))
-    data_partitions = dst_train  # List of data partitions
+    # Prepare client IDs
+    client_ids = list(range(args.num_partitions))
 
     # Prepare picklable arguments
     args_dict = copy.deepcopy(vars(args))
     args_dict['device'] = str(args.device)  # Convert torch.device to string
-    data_partition_indices = [partition.indices for partition in data_partitions]
+
+    # Create an Event object for synchronization
+    aggregation_complete_event = Event()
 
     # Main communication rounds
     for r in range(1, rounds + 1):
         print(f"--- Round {r}/{rounds} ---")
 
-        # Step 1: Clients calculate and save their Vkc logits (before data condensation)
+        # Ensure the event is cleared at the start of the round
+        aggregation_complete_event.clear()
+
+        # Clients perform all computations in a single function
         with ProcessPoolExecutor() as executor:
             futures = [
-                executor.submit(client_compute_Vkc, client_id, data_partition_indices[client_id], args_dict, r)
+                executor.submit(
+                    client_full_round,
+                    client_id,
+                    data_partition_indices[client_id],
+                    args_dict,
+                    r,
+                    base_dataset,
+                    aggregation_complete_event  # Pass the event
+                )
                 for client_id in client_ids
             ]
+
+            # Wait for all clients to finish computing Vkc
+            # (In practice, we can proceed as soon as all clients have computed Vkc)
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as e:
-                    print(f"Error in client_compute_Vkc: {e}")
+                    print(f"Error in client_full_round: {e}")
 
-        # Step 2: Server aggregates V logits and saves aggregated logits for clients
+        # Server aggregates V logits and saves aggregated logits for clients
         aggregated_V_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
         save_aggregated_logits(aggregated_V_logits, args, r, 'V')
 
-        # Step 3: Clients perform Data Condensation on synthetic data S
-        with ProcessPoolExecutor() as executor:
-            futures = [
-                executor.submit(client_data_condensation, client_id, data_partition_indices[client_id], args_dict, r)
-                for client_id in client_ids
-            ]
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"Error in client_data_condensation: {e}")
+        # Signal clients that aggregation is complete
+        aggregation_complete_event.set()
 
-        # Step 4: Clients calculate and save their Rkc logits (after data condensation)
-        with ProcessPoolExecutor() as executor:
-            futures = [
-                executor.submit(client_compute_Rkc, client_id, args_dict, r)
-                for client_id in client_ids
-            ]
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"Error in client_compute_Rkc: {e}")
+        # Now clients can proceed with data condensation and computing Rkc
 
-        # Step 5: Server aggregates R logits and saves aggregated logits
+        # Wait for clients to finish the rest of their computations if necessary
+        # In this setup, clients will complete their computations asynchronously
+
+        # Server aggregates R logits and saves aggregated logits
         aggregated_R_logits = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
         save_aggregated_logits(aggregated_R_logits, args, r, 'R')
 
@@ -179,45 +176,31 @@ def simulate(rounds):
             device=args.device,
         )
 
-def client_compute_Vkc(client_id, data_partition_indices, args_dict, r):
+def client_full_round(client_id, data_partition_indices, args_dict, r, base_dataset, aggregation_complete_event):
     # Reconstruct args
     args = ARGS.from_dict(args_dict)
     args.device = torch.device(args.device)
 
     # Reconstruct data_partition
-    dataset = get_base_dataset(args.dataset, args.data_path, train=True)
-    data_partition = Subset(dataset, data_partition_indices)
+    data_partition = Subset(base_dataset, data_partition_indices)
 
     # Create client instance
     client = Client(client_id, data_partition, args)
 
-    # Only calculate and save Vkc
+    # Load and resample the model once
+    client.model = client.load_global_model()
+    client.resample_model(client.model)
+
+    # Run Vkc computation
     client.run_Vkc(r)
 
-def client_data_condensation(client_id, data_partition_indices, args_dict, r):
-    # Reconstruct args
-    args = ARGS.from_dict(args_dict)
-    args.device = torch.device(args.device)
+    # Wait for the server to aggregate Vc
+    print(f"Client {client_id} is waiting for global Vc aggregation.")
+    aggregation_complete_event.wait()
+    print(f"Client {client_id} received signal to proceed.")
 
-    # Reconstruct data_partition
-    dataset = get_base_dataset(args.dataset, args.data_path, train=True)
-    data_partition = Subset(dataset, data_partition_indices)
-
-    # Create client instance
-    client = Client(client_id, data_partition, args)
-
-    # Perform data condensation
+    # Proceed to data condensation and Rkc computation
     client.run_data_condensation(r)
-
-def client_compute_Rkc(client_id, args_dict, r):
-    # Reconstruct args
-    args = ARGS.from_dict(args_dict)
-    args.device = torch.device(args.device)
-
-    # Create client instance without a data partition
-    client = Client(client_id, None, args)
-
-    # Only calculate and save Rkc
     client.run_Rkc(r)
 
 def aggregate_logits(client_ids, num_classes, v_r, args, r):
@@ -243,7 +226,7 @@ def aggregate_logits(client_ids, num_classes, v_r, args, r):
             client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
             if os.path.exists(client_Vkc_path):
                 try:
-                    client_logit = torch.load(client_Vkc_path, map_location=args.device)  # Removed weights_only=True
+                    client_logit = torch.load(client_Vkc_path, map_location=args.device)
                     if isinstance(client_logit, torch.Tensor):
                         if client_logit.numel() == num_classes:
                             aggregated_logits += client_logit
@@ -284,5 +267,4 @@ def save_aggregated_logits(aggregated_logits, args, r, v_r):
     print(f"Server: Aggregated {v_r} logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn')
     simulate(rounds=20)
