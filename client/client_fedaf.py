@@ -60,10 +60,7 @@ class Client:
         """
         Runs the computation of Vkc logits.
         """
-        # Load and resample the model
-        self.model = self.load_global_model()
-        self.resample_model(self.model)
-
+        # The model is already loaded and resampled in client_full_round
         # Calculate and save Vkc
         self.calculate_and_save_V_logits(r)
 
@@ -71,11 +68,6 @@ class Client:
         """
         Runs data condensation.
         """
-        # Load the model (already resampled in run_Vkc)
-        if self.model is None:
-            self.model = self.load_global_model()
-            self.resample_model(self.model)
-
         # Load global aggregated logits
         self.global_Vc = self.load_global_aggregated_logits(r)
 
@@ -92,11 +84,6 @@ class Client:
         """
         Runs the computation of Rkc logits.
         """
-        # Load the model (already resampled in run_Vkc)
-        if self.model is None:
-            self.model = self.load_global_model()
-            self.resample_model(self.model)
-
         # Load synthetic data
         self.load_synthetic_data(r)
 
@@ -105,10 +92,10 @@ class Client:
 
     def load_global_model(self):
         """
-        Loads the latest global model from the server and resamples it.
+        Loads the latest global model from the server.
 
         Returns:
-            torch.nn.Module: Loaded and resampled global model.
+            torch.nn.Module: Loaded global model.
         """
         logger.info(f"Client {self.client_id}: Loading global model.")
         try:
@@ -126,14 +113,6 @@ class Client:
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error loading global model - {e}")
             raise e
-
-    def dynamic_lambda_cdc(self, r, total_rounds):
-        # """Dynamically adjusts lambda_cdc based on the current round."""
-        # max_lambda = 1.0
-        # min_lambda = 0.1
-        # lambda_cdc = min_lambda + (max_lambda - min_lambda) * (r / total_rounds)
-        lambda_cdc = 0.8
-        return lambda_cdc
 
     def resample_model(self, model_net):
         """
@@ -234,19 +213,19 @@ class Client:
         global_logits_path = os.path.join(self.args.logits_dir, 'Global', global_logits_filename)
         if os.path.exists(global_logits_path):
             try:
-                aggregated_tensors = torch.load(global_logits_path, map_location=self.device)  # List of tensors
-                if isinstance(aggregated_tensors, list) and len(aggregated_tensors) == self.num_classes:
+                aggregated_logits = torch.load(global_logits_path, map_location=self.device)  # Tensor of shape [num_classes,]
+                if isinstance(aggregated_logits, torch.Tensor) and aggregated_logits.shape[0] == self.num_classes:
                     logger.info(f"Client {self.client_id}: Loaded aggregated logits from {global_logits_path}.")
                 else:
-                    logger.error(f"Client {self.client_id}: Aggregated logits format incorrect. Expected list of length {self.num_classes}.")
-                    aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
+                    logger.error(f"Client {self.client_id}: Aggregated logits format incorrect. Expected tensor of shape [{self.num_classes}], got {aggregated_logits.shape}.")
+                    aggregated_logits = torch.zeros(self.num_classes, device=self.device)
             except Exception as e:
                 logger.error(f"Client {self.client_id}: Error loading aggregated logits - {e}")
-                aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
+                aggregated_logits = torch.zeros(self.num_classes, device=self.device)
         else:
             logger.warning(f"Client {self.client_id}: Aggregated logits not found at {global_logits_path}. Initializing with zeros.")
-            aggregated_tensors = [torch.zeros(self.num_classes, device=self.device) for _ in range(self.num_classes)]
-        return aggregated_tensors
+            aggregated_logits = torch.zeros(self.num_classes, device=self.device)
+        return aggregated_logits
 
     def initialize_synthetic_data(self, r):
         """
@@ -268,18 +247,16 @@ class Client:
             if self.args.init == 'real':
                 logger.info(f"Client {self.client_id}: Initializing synthetic data from real images.")
                 for c in range(self.num_classes):
-                    real_loader = self.get_images_loader(c, max_batch_size=min(self.ipc, 256))
+                    real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
                     if real_loader is not None:
                         try:
                             images, _ = next(iter(real_loader))
                             images = images.to(self.device)
                             if images.size(0) >= self.ipc:
-                                # Randomly select ipc indices
-                                indices = torch.randperm(images.size(0))[:self.ipc]
-                                selected_images = images[indices]
+                                selected_images = images[:self.ipc]
                                 initialized_classes.append(c)
                                 self.image_syn.data[c * self.ipc:(c + 1) * self.ipc] = selected_images.detach().data
-                                logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with random real data.")
+                                logger.info(f"Client {self.client_id}: Initialized class {c} synthetic images with real data.")
                             else:
                                 logger.warning(f"Client {self.client_id}: Not enough images for class {c}. Required at least {self.ipc}, Available: {images.size(0)}. Skipping initialization.")
                         except StopIteration:
@@ -443,7 +420,7 @@ class Client:
                     mean_feature_syn = torch.mean(output_syn, dim=0)
 
                     # Retrieve real images DataLoader for class c
-                    real_loader = self.get_images_loader(c, max_batch_size=min(self.ipc, 256))
+                    real_loader = self.get_images_loader(c, max_batch_size=self.ipc)
                     if real_loader is not None:
                         try:
                             # Get the first (and only) batch
@@ -457,12 +434,12 @@ class Client:
                             logger.debug(f"Client {self.client_id}: Class {c} Distribution Matching Loss: {loss_feature.item():.4f}")
 
                             # Client Data Condensation Loss
-                            if self.global_Vc[c] is not None and self.global_Vc[c].numel() > 0:
-                                loss_logit = compute_swd(local_ukc, self.global_Vc[c])
+                            if self.global_Vc is not None and self.global_Vc.numel() > 0:
+                                loss_logit = compute_swd(local_ukc, self.global_Vc)
                                 loss += loss_feature + lambda_cdc * loss_logit
                                 logger.debug(f"Client {self.client_id}: Class {c} Client Data Condensation Loss: {loss_logit.item():.4f}")
                             else:
-                                logger.warning(f"Client {self.client_id}: Missing global logits for class {c}. Skipping SWD computation.")
+                                logger.warning(f"Client {self.client_id}: Missing global logits. Skipping SWD computation.")
                         except StopIteration:
                             logger.warning(f"Client {self.client_id}: No images retrieved for class {c} in DataLoader.")
                     else:
