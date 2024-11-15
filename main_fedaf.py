@@ -40,11 +40,15 @@ class ARGS:
             self.channel = 1
             self.num_classes = 10
             self.im_size = (28, 28)
+            self.mean = [0.1307]
+            self.std = [0.3081]
         elif self.dataset == 'CIFAR10':
             self.channel = 3
             self.num_classes = 10
             self.im_size = (32, 32)
-
+            self.mean = [0.4914, 0.4822, 0.4465]
+            self.std = [0.2023, 0.1994, 0.2010]
+            
     @classmethod
     def from_dict(cls, args_dict):
         args = cls()
