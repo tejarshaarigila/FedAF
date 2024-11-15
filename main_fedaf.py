@@ -116,11 +116,11 @@ def simulate(rounds):
     for r in range(1, rounds + 1):
         print(f"--- Round {r}/{rounds} ---")
 
-        # Clients perform all computations in a single function
+        # Phase 1: Clients compute Vkc
         with ProcessPoolExecutor() as executor:
             futures = [
                 executor.submit(
-                    client_full_round,
+                    client_compute_Vkc,
                     client_id,
                     data_partition_indices[client_id],
                     args_dict,
@@ -129,19 +129,36 @@ def simulate(rounds):
                 )
                 for client_id in client_ids
             ]
-
             # Wait for all clients to finish computing Vkc
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as e:
-                    print(f"Error in client_full_round: {e}")
+                    print(f"Error in client_compute_Vkc: {e}")
 
         # Server aggregates V logits and saves aggregated logits for clients
         aggregated_V_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
         save_aggregated_logits(aggregated_V_logits, args, r, 'V')
 
-        # Now clients can proceed with data condensation and computing Rkc
+        # Phase 2: Clients perform data condensation and compute Rkc
+        with ProcessPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    client_data_condensation_and_Rkc,
+                    client_id,
+                    data_partition_indices[client_id],
+                    args_dict,
+                    r,
+                    base_dataset
+                )
+                for client_id in client_ids
+            ]
+            # Wait for all clients to finish data condensation and Rkc computation
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    print(f"Error in client_data_condensation_and_Rkc: {e}")
 
         # Server aggregates R logits and saves aggregated logits
         aggregated_R_logits = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
@@ -162,7 +179,7 @@ def simulate(rounds):
             device=args.device,
         )
 
-def client_full_round(client_id, data_partition_indices, args_dict, r, base_dataset):
+def client_compute_Vkc(client_id, data_partition_indices, args_dict, r, base_dataset):
     # Reconstruct args
     args = ARGS.from_dict(args_dict)
     args.device = torch.device(args.device)
@@ -179,6 +196,20 @@ def client_full_round(client_id, data_partition_indices, args_dict, r, base_data
 
     # Run Vkc computation
     client.run_Vkc(r)
+
+def client_data_condensation_and_Rkc(client_id, data_partition_indices, args_dict, r, base_dataset):
+    # Reconstruct args
+    args = ARGS.from_dict(args_dict)
+    args.device = torch.device(args.device)
+
+    # Reconstruct data_partition
+    data_partition = Subset(base_dataset, data_partition_indices)
+
+    # Create client instance
+    client = Client(client_id, data_partition, args)
+
+    # Load the model (if necessary)
+    client.model = client.load_global_model()
 
     # Wait for the server to aggregate Vc
     print(f"Client {client_id} is waiting for global Vc aggregation.")
