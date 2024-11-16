@@ -22,7 +22,7 @@ class ARGS:
         self.logits_dir = '/home/t914a431/logits'
         self.save_image_dir = '/home/t914a431/images'
         self.save_path = '/home/t914a431/result'
-        self.device = 'cpu'
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.ipc = 50  # Instances Per Class
         self.eval_mode = 'SS'
         self.Iteration = 1000  # Local Steps
