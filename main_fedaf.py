@@ -13,7 +13,7 @@ from utils.utils_fedaf import get_network, get_base_dataset, save_aggregated_log
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'MNIST'  # or 'CIFAR10'
+        self.dataset = 'MNIST'  # or 'CIFAR10'/'CelebA'
         self.model = 'ConvNet'
         self.model_name = self.model
         self.method = 'DM'
