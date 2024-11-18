@@ -29,7 +29,7 @@ def randomize_labels(dataset):
         raise AttributeError("Dataset does not have 'targets' or 'labels' attribute.")
     return randomized_dataset
 
-def load_data(dataset, alpha, num_clients):
+def load_data(dataset, alpha, num_clients, selected_attribute='Male'):
     """Load and partition data among clients using Dirichlet distribution for non-IID setting."""
     logger.info("Loading %s dataset with alpha: %.4f", dataset, alpha)
     if dataset == 'CIFAR10':
@@ -41,25 +41,42 @@ def load_data(dataset, alpha, num_clients):
         full_train_dataset = datasets.MNIST(root='data', train=True, download=True, transform=transform)
         test_dataset = datasets.MNIST(root='data', train=False, download=True, transform=transform)
     elif dataset == 'CelebA':
-        transform = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
-        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform)
-        test_dataset = datasets.CelebA(root='data', split='test', download=True, transform=transform)
+        transform = transforms.Compose([
+            transforms.Resize((64, 64)),
+            transforms.CenterCrop(64),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
+        ])
+        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform, target_type='attr')
+        test_dataset = datasets.CelebA(root='data', split='test', download=True, transform=transform, target_type='attr')
+        
+        # Extract the 'Male' attribute index
+        attr_names = full_train_dataset.attr_names
+        if selected_attribute not in attr_names:
+            raise ValueError(f"Attribute '{selected_attribute}' not found in CelebA.")
+        attr_idx = attr_names.index(selected_attribute)
+        
+        # Binarize labels: 0 (Female), 1 (Male)
+        full_train_dataset.targets = (full_train_dataset.attr[:, attr_idx] == 1).long()
+        test_dataset.targets = (test_dataset.attr[:, attr_idx] == 1).long()
     else:
         raise ValueError("Unsupported dataset.")
 
-    # Split data into non-IID partitions
-    targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
+    if dataset == 'CelebA':
+        targets = np.array(full_train_dataset.targets)
+    else:
+        targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
+    
+    # Split data using Dirichlet distribution
     client_indices = partition_data(targets, num_clients, alpha)
     logger.info("Data partitioned among %d clients.", num_clients)
-
-    # Return the full dataset and client indices
+    
     test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
-
+    
     return full_train_dataset, client_indices, test_loader
 
-def load_client_data(client_id, args):
-    """Load the data for a specific client based on client_id."""
-    # Load the full training dataset
+def load_client_data(client_id, args, selected_attribute='Male'):
+    """Load the data for a specific client based on client_id and selected attribute."""
     if args.dataset == 'CIFAR10':
         transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
         full_train_dataset = datasets.CIFAR10(root='data', train=True, download=True, transform=transform)
@@ -67,19 +84,34 @@ def load_client_data(client_id, args):
         transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
         full_train_dataset = datasets.MNIST(root='data', train=True, download=True, transform=transform)
     elif args.dataset == 'CelebA':
-        transform = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
-        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform)
+        transform = transforms.Compose([
+            transforms.Resize((64, 64)),
+            transforms.CenterCrop(64),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
+        ])
+        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform, target_type='attr')
+        
+        # Extract the 'Male' attribute index
+        attr_names = full_train_dataset.attr_names
+        if selected_attribute not in attr_names:
+            raise ValueError(f"Attribute '{selected_attribute}' not found in CelebA.")
+        attr_idx = attr_names.index(selected_attribute)
+        
+        # Binarize labels: 0 (Female), 1 (Male)
+        full_train_dataset.targets = (full_train_dataset.attr[:, attr_idx] == 1).long()
     else:
         raise ValueError("Unsupported dataset.")
 
-    # Ensure the same partitioning is applied
-    targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
+    if args.dataset == 'CelebA':
+        targets = np.array(full_train_dataset.targets)
+    else:
+        targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
+    
     client_indices = partition_data(targets, args.num_clients, args.alpha)
 
-    # Get the indices for the specified client
     indices = client_indices[client_id]
 
-    # Create a Subset for the client
     client_dataset = Subset(full_train_dataset, indices)
     return client_dataset
 
