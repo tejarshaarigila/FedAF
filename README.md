@@ -1,4 +1,4 @@
-# **Framework to Benchmark [Federated Aggregation Free](https://doi.org/10.48550/arXiv.2404.18962) and [Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)**
+# **Framework to Benchmark [Federated Learning Aggregation Free](https://doi.org/10.48550/arXiv.2404.18962) and [Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)**
 
 ## **FedAVG Implementation**
 
