@@ -1,4 +1,4 @@
-# **Framework to Benchmark FedAF and FedAVG**
+# **Framework to Benchmark [FedAF][https://doi.org/10.48550/arXiv.2404.18962] and [FedAVG][https://doi.org/10.48550/arXiv.1602.05629]**
 
 ## **FedAVG Implementation**
 
