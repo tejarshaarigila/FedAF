@@ -5,7 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, TensorDataset
-from utils.utils import get_network
+from utils.utils_fedaf import get_network
 import numpy as np
 from multiprocessing import Pool, set_start_method
 import logging
@@ -35,7 +35,7 @@ class PlotArgs:
                             help='Number of times to repeat testing for averaging')
         parser.add_argument('--num_users', type=int, default=10,
                             help='Number of clients')
-        parser.add_argument('--honesty_ratio', type=float, default=1.0,
+        parser.add_argument('--honesty_ratio', type=int, default=1,
                             help='Honesty ratio parameter')
         parser.add_argument('--alpha_dirichlet', type=float, default=0.1,
                             help='Dirichlet distribution parameter alpha')
@@ -45,7 +45,7 @@ class PlotArgs:
                             help='Methods to compare (e.g., fedaf fedavg)')
         parser.add_argument('--model_base_dir', type=str, default='/home/t914a431/models',
                             help='Base directory for models')
-        parser.add_argument('--save_dir', type=str, default='/home/t914a431/results/',
+        parser.add_argument('--save_dir', type=str, default='/home/t914a431/plots/',
                             help='Directory to save the plots')
         
         args = parser.parse_args()
@@ -119,7 +119,7 @@ def evaluate_model_wrapper(args_tuple):
         return method, round_num, None  # Indicate missing model
     
     # Instantiate the model
-    model = get_network(args.model, args.channel, args.num_classes, args.im_size, device=args.device)
+    model = get_network(args.model, args.channel, args.num_classes, args.im_size).to(args.device)
     try:
         model.load_state_dict(torch.load(model_path, map_location=args.device))
     except Exception as e:
@@ -168,7 +168,7 @@ def test_saved_models(args):
     except RuntimeError:
         pass  # If the start method has already been set
 
-    with Pool(processes=min(args.num_users, os.cpu_count())) as pool:
+    with Pool(processes= os.cpu_count()) as pool:
         results = pool.map(evaluate_model_wrapper, eval_tasks)
 
     # Collect the results

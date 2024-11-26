@@ -13,7 +13,7 @@ from utils.utils_fedaf import get_network, get_base_dataset, save_aggregated_log
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'MNIST'  # or 'CIFAR10'/'CelebA'
+        self.dataset = 'CIFAR10'  # or 'CIFAR10'
         self.model = 'ConvNet'
         self.model_name = self.model
         self.method = 'DM'
@@ -27,7 +27,7 @@ class ARGS:
         self.eval_mode = 'SS'
         self.Iteration = 1000  # Local Steps
         self.lr_img = 1
-        self.num_partitions = 5
+        self.num_partitions = 15
         self.alpha = 0.1  # Dirichlet distribution parameter
         self.steps = 500  # Global Steps
         self.loc_cdc = 0.8
