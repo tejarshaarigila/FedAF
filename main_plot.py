@@ -15,7 +15,7 @@ import argparse
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s',
-    filename='/home/t914a431/log/plotting.log',
+    filename='/home/log/plotting.log',
     filemode='w'
 )
 logger = logging.getLogger(__name__)
@@ -43,9 +43,9 @@ class PlotArgs:
         # Optional Arguments
         parser.add_argument('--methods', type=str, nargs='+', default=['fedaf', 'fedavg'],
                             help='Methods to compare (e.g., fedaf fedavg)')
-        parser.add_argument('--model_base_dir', type=str, default='/home/t914a431/models',
+        parser.add_argument('--model_base_dir', type=str, default='/home/models',
                             help='Base directory for models')
-        parser.add_argument('--save_dir', type=str, default='/home/t914a431/plots/',
+        parser.add_argument('--save_dir', type=str, default='/home/plots/',
                             help='Directory to save the plots')
         
         args = parser.parse_args()
