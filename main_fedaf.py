@@ -69,6 +69,8 @@ def initialize_global_model(args):
 
 def simulate(rounds):
     args = ARGS()
+    np.random.seed(42)
+    torch.manual_seed(42)
     args.eval_it_pool = (
         np.arange(0, args.Iteration + 1, args.steps).tolist()
         if args.eval_mode in ['S', 'SS']
