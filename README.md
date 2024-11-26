@@ -170,5 +170,3 @@ python main_plot.py --dataset MNIST --model ConvNet --methods fedaf fedavg --num
 - **Saved At**: `/home/plots/`
 
 ---
-
-These changes add consistency, section headers, and better formatting while maintaining the technical accuracy of your README. Let me know if you need further edits!
