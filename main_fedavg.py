@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class ARGS:
     def __init__(self):
-        self.dataset = 'CelebA'  # 'MNIST' - 'CIFAR10' - 'CelebA'
+        self.dataset = 'MNIST'  # 'MNIST' - 'CIFAR10' - 'CelebA'
         self.model = 'ConvNet'  # 'ConvNet' - 'ResNet'
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.num_clients = 5
