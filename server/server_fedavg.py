@@ -65,7 +65,7 @@ class Server:
         accuracy = 100 * correct / total
         
         # Save the global model after evaluation
-        model_save_path = f"/home/t914a431/models/{self.args.dataset}/{self.args.model}/{self.args.num_clients}/{str(int(self.args.honesty_ratio))}/fedavg_global_model_{round_num}.pth"
+        model_save_path = f"/home/models/{self.args.dataset}/{self.args.model}/{self.args.num_clients}/{str(int(self.args.honesty_ratio))}/fedavg_global_model_{round_num}.pth"
         
         # Extract the directory path from the model save path
         model_save_dir = os.path.dirname(model_save_path)
