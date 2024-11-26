@@ -42,8 +42,6 @@ def load_data(dataset, alpha, num_clients, selected_attribute='Male'):
         test_dataset = datasets.MNIST(root='data', train=False, download=True, transform=transform)
     elif dataset == 'CelebA':
         transform = transforms.Compose([
-            transforms.Resize((64, 64)),
-            transforms.CenterCrop(64),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
         ])
