@@ -1,4 +1,4 @@
-# **Framework to Benchmark [FL Aggregation Free](https://doi.org/10.48550/arXiv.2404.18962) and [FL Averaging](https://doi.org/10.48550/arXiv.1602.05629)**
+# Benchmarking Framework for **[FL Aggregation Free](https://doi.org/10.48550/arXiv.2404.18962)** and **[FL Averaging](https://doi.org/10.48550/arXiv.1602.05629)**
 
 ## **FedAVG Implementation**
 
