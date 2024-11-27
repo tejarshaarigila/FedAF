@@ -5,7 +5,7 @@
 ### **1. Parameters Overview**
 
 #### **Dataset Parameters**
-- **`dataset`**: The dataset used for federated learning. Options:
+- **`dataset`**: The dataset used for federated learning:
   - `'MNIST'`
   - `'CIFAR10'`
 - **`channel`**: Number of image channels (auto-set based on dataset):
@@ -19,7 +19,7 @@
   - `'ConvNet'`: Convolutional Neural Network.
   - `'ResNet'`: Residual Network.
 - **`device`**: Training device:
-  - `'cuda'`: If a GPU is available.
+  - `'cuda'`: If GPU is available.
   - `'cpu'`: Otherwise.
 
 #### **Federated Learning Parameters**
