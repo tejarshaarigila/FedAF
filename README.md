@@ -156,7 +156,7 @@ python main_plot.py --dataset CIFAR10 --model ConvNet --methods fedaf fedavg
 | `--alpha_dirichlet`  | `float`   | `0.1`          | Dirichlet parameter for data heterogeneity.                          |
 | `--methods`          | `list`    | `['fedaf', 'fedavg']` | Methods to compare.                                              |
 | `--model_base_dir`   | `str`     | `/home/models` | Base directory for trained models.                                   |
-| `--save_dir`         | `str`     | `/home/plots/` | Directory to save plots.                                             |
+| `--save_dir`         | `str`     | `/home/plots` | Directory to save plots.                                             |
 
 ---
 
@@ -167,6 +167,6 @@ python main_plot.py --dataset MNIST --model ConvNet --methods fedaf fedavg --num
 
 #### **Output**
 - **Plot Name**: `MNIST_ConvNet_C10_alpha0.1.png`
-- **Saved At**: `/home/plots/`
+- **Saved At**: `/home/plots`
 
 ---
