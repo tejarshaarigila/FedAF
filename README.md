@@ -102,7 +102,7 @@ python main_plot.py --dataset CIFAR10 --model ConvNet --methods fedaf fedavg
 
 ---
 
-### **4. Example Command**
+### **3. Example Command**
 ```bash
 python main_plot.py --dataset MNIST --model ConvNet --methods fedaf fedavg --num_users 10 --alpha_dirichlet 0.1
 ```
