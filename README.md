@@ -2,7 +2,7 @@
 
   This project benchmarks Federated Learning Aggregation-Free (FedAF) (Wang et al., 2024) using the MNIST (Deng, 2012) and CIFAR-10 (Krizhevsky, 2009) datasets under non-independent and identically distributed (non-IID) data conditions with Federated Averaging (FedAvg) (McMahan et al., 2017).
 
-## **FedAVG Implementation**
+## **FedAvg Implementation**
 
 ### **1. Parameters Overview**
 
