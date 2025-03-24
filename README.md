@@ -5,6 +5,20 @@
 
 ---
 
+## **FedAF Implementation**
+
+### **1. Parameters Overview**
+
+#### **Training and Evaluation Parameters**
+- **`Iteration`**: Local training steps per client.
+- **`ipc`**: Instances per class for synthetic data condensation.
+- **`lr_img`**: Learning rate for synthetic image optimization.
+- **`steps`**: Frequency of global aggregation.
+- **`temperature`**: Softmax temperature for logit aggregation.
+- **`gamma`**: Momentum coefficient for logit aggregation.
+
+---
+
 ## **FedAvg Implementation**
 
 ### **1. Parameters Overview**
@@ -22,20 +36,6 @@
 - **`lr`**: Learning rate for the optimizer.
 - **`batch_size`**: Batch size for local training.
 - **`num_rounds`**: Total number of server-client communication rounds.
-
----
-
-## **FedAF Implementation**
-
-### **1. Parameters Overview**
-
-#### **Training and Evaluation Parameters**
-- **`Iteration`**: Local training steps per client.
-- **`ipc`**: Instances per class for synthetic data condensation.
-- **`lr_img`**: Learning rate for synthetic image optimization.
-- **`steps`**: Frequency of global aggregation.
-- **`temperature`**: Softmax temperature for logit aggregation.
-- **`gamma`**: Momentum coefficient for logit aggregation.
 
 ---
 
