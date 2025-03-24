@@ -61,6 +61,7 @@
 ```bash
 python main_plot.py --dataset CIFAR10 --model ConvNet --methods fedaf fedavg
 
+---
 
 #### **Command-Line Arguments**
 
