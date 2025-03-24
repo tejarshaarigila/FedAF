@@ -1,4 +1,4 @@
-# This is the repository of my Masters Degree Project.
+# Repository of my Masters Degree Project (KU EECS 891).
 
 ## ​Benchmarking **[Aggregation Free Federated Learning using Data Condensation](https://doi.org/10.48550/arXiv.2404.18962)** and Comparison with **[Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)**
 
@@ -24,22 +24,6 @@
 
 ---
 
-### **2. Default Configuration**
-
-| **Parameter**      | **Default Value**    |
-|---------------------|----------------------|
-| `dataset`          | `'MNIST'`           |
-| `model`            | `'ConvNet'`         |
-| `device`           | `'cuda'` or `'cpu'` |
-| `num_clients`      | `5`                 |
-| `alpha`            | `0.1`               |
-| `local_epochs`     | `10`                |
-| `lr`               | `0.01`              |
-| `batch_size`       | `64`                |
-| `num_rounds`       | `20`                |
-
----
-
 ## **FedAF Implementation**
 
 ### **1. Parameters Overview**
@@ -51,25 +35,6 @@
 - **`steps`**: Frequency of global aggregation.
 - **`temperature`**: Softmax temperature for logit aggregation.
 - **`gamma`**: Momentum coefficient for logit aggregation.
-
----
-
-### **2. Default Configuration**
-
-| **Parameter**      | **Default Value**    |
-|---------------------|----------------------|
-| `dataset`          | `'MNIST'`           |
-| `model`            | `'ConvNet'`         |
-| `device`           | `'cuda'` or `'cpu'` |
-| `num_partitions`   | `15`                |
-| `alpha`            | `0.1`               |
-| `Iteration`        | `1000`              |
-| `ipc`              | `50`                |
-| `lr_img`           | `1`                 |
-| `steps`            | `500`               |
-| `temperature`      | `2.0`               |
-| `gamma`            | `0.9`               |
-| `eval_mode`        | `'SS'`              |
 
 ---
 
@@ -103,12 +68,5 @@ python main_plot.py --dataset CIFAR10 --model ConvNet --methods fedaf fedavg
 | `--methods`          | `list`    | `['fedaf', 'fedavg']` | Methods to compare.                                              |
 | `--model_base_dir`   | `str`     | `/home/models` | Base directory for trained models.                                   |
 | `--save_dir`         | `str`     | `/home/plots` | Directory to save plots.                                             |
-
----
-
-### **3. Example Command**
-```bash
-python main_plot.py --dataset MNIST --model ConvNet --methods fedaf fedavg --num_users 10 --alpha_dirichlet 0.1
-```
 
 ---
