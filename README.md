@@ -19,6 +19,13 @@ This project benchmarks **Federated Learning Aggregation-Free (FedAF)** (Wang et
 
 ---
 
+#### Execution:
+Run the following command:
+```bash
+python main_fedaf.py
+```
+---
+
 ## ⚡ **FedAvg Implementation**
 
 ### 🔹 **1. Parameters Overview**
@@ -37,6 +44,13 @@ This project benchmarks **Federated Learning Aggregation-Free (FedAF)** (Wang et
 - **`batch_size`**: Batch size for local training.
 - **`num_rounds`**: Total number of server-client communication rounds.
 
+---
+
+#### Execution:
+Run the following command:
+```bash
+python main_fedavg.py
+```
 ---
 
 ## 📊 **Plotting Using `main_plot.py`**
