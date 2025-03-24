@@ -77,4 +77,3 @@ python main_plot.py --dataset CIFAR10 --model ConvNet --methods fedaf fedavg
 | `--save_dir`        | `str`    | `/home/plots`     | Directory to save plots.                                |
 
 ---
-```
