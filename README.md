@@ -1,6 +1,4 @@
-# Masters Project Repository – Benchmarking Aggregation-Free Federated Learning
-
-## Benchmarking **[Aggregation-Free Federated Learning using Data Condensation](https://doi.org/10.48550/arXiv.2404.18962)** and Comparison with **[Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)** 
+# Masters Project Repository – Benchmarking **[Aggregation-Free Federated Learning using Data Condensation](https://doi.org/10.48550/arXiv.2404.18962)** and Comparison with **[Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)** 
 
   This project benchmarks Federated Learning Aggregation-Free (FedAF) (Wang et al., 2024) using the MNIST (Deng, 2012) and CIFAR-10 (Krizhevsky, 2009) datasets under non-independent and identically distributed (non-IID) data conditions, comparing it with Federated Averaging (FedAvg) (McMahan et al., 2017).
 
