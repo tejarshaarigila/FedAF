@@ -1,13 +1,15 @@
 # Repository of my Masters Degree Project (KU EECS 891).
 
-## ​Benchmarking **[Aggregation Free Federated Learning using Data Condensation](https://doi.org/10.48550/arXiv.2404.18962)** and Comparison with **[Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)**
-
+<p align="center"> 
+## ​Benchmarking **[Aggregation Free Federated Learning using Data Condensation](https://doi.org/10.48550/arXiv.2404.18962)** and Comparison with **[Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)** 
+</p>
+<p align="justify">
   This project benchmarks Federated Learning Aggregation-Free (FedAF) (Wang et al., 2024) using the MNIST (Deng, 2012) and CIFAR-10 (Krizhevsky, 2009) datasets under non-independent and identically distributed (non-IID) data conditions with Federated Averaging (FedAvg) (McMahan et al., 2017).
-
+</p>
 ## **FedAvg Implementation**
 
 ### **1. Parameters Overview**
-
+<p align="center"> 
 #### **Model Parameters**
 - **`model`**: Model architecture used for local training:
   - `'ConvNet'`: Convolutional Neural Network.
@@ -15,19 +17,20 @@
 - **`device`**: Training device:
   - `'cuda'`: If GPU is available.
   - `'cpu'`: Otherwise.
-
+</p>
+<p align="center"> 
 #### **Training Parameters**
 - **`local_epochs`**: Number of local training epochs per client.
 - **`lr`**: Learning rate for the optimizer.
 - **`batch_size`**: Batch size for local training.
 - **`num_rounds`**: Total number of server-client communication rounds.
-
+</p>
 ---
 
 ## **FedAF Implementation**
 
 ### **1. Parameters Overview**
-
+<p align="center"> 
 #### **Training and Evaluation Parameters**
 - **`Iteration`**: Local training steps per client.
 - **`ipc`**: Instances per class for synthetic data condensation.
@@ -35,7 +38,7 @@
 - **`steps`**: Frequency of global aggregation.
 - **`temperature`**: Softmax temperature for logit aggregation.
 - **`gamma`**: Momentum coefficient for logit aggregation.
-
+</p>
 ---
 
 ## **Plotting Using `main_plot.py`**
