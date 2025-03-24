@@ -20,7 +20,7 @@ This project benchmarks **Federated Learning Aggregation-Free (FedAF)** (Wang et
 ---
 
 #### Execution:
-Run the following command:
+
 ```bash
 python main_fedaf.py
 ```
@@ -47,7 +47,7 @@ python main_fedaf.py
 ---
 
 #### Execution:
-Run the following command:
+
 ```bash
 python main_fedavg.py
 ```
