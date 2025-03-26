@@ -4,7 +4,7 @@ This repository provides a Python implementation of **FedAF** (Aggregation-Free 
 
 ## Overview
 
-Federated Learning enables collaborative model training across decentralized devices holding local data, without exchanging the data itself. This framework allows researchers to compare FedAF and FedAvg in terms of performance and efficiency.
+Federated Learning enables collaborative model training across decentralized devices holding local data, without exchanging the data itself. This framework allows to compare FedAF and FedAvg in terms of performance and efficiency.
 
 ## Features
 
