@@ -11,7 +11,6 @@ Federated Learning enables collaborative model training across decentralized dev
 - **FedAF Implementation**: Benchmarking Aggregation-Free Federated Learning using synthetic data condensation.
 - **FedAvg Implementation**: Standard Federated Averaging algorithm for comparison.
 - **Dataset Support**: Utilizes MNIST and CIFAR-10 datasets with non-IID data partitioning.
-- **Modular Design**: Organized into client, server, and utility modules for flexibility and ease of use.
 
 ## Requirements
 
