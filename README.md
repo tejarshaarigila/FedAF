@@ -16,10 +16,11 @@ Federated Learning enables collaborative model training across decentralized dev
 ## Requirements
 
 - Python 3.x
-- PyTorch
-- NumPy
-- Matplotlib
-- Other dependencies listed in `requirements.txt`
+- torch
+- torchvision
+- numpy
+- matplotlib
+- scikit-learn
 
 ## Installation
 
@@ -28,7 +29,6 @@ Clone the repository and install the required packages:
 ```bash
 git clone https://github.com/tejarshaarigila/Federated-Learning-Framework.git
 cd Federated-Learning-Framework
-pip install -r requirements.txt
 ```
 
 ## Usage
