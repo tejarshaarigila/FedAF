@@ -69,12 +69,14 @@ This script generates plots comparing the performance of FedAF and FedAvg.
 If you use this framework in your research, please cite the following paper:
 
 ```
-@article{Wang2024FedAF,
-  title     = {Aggregation-Free Federated Learning using Data Condensation},
-  author    = {Wang, X. and others},
-  journal   = {arXiv preprint arXiv:2401.12345},
-  year      = {2024}
+@inproceedings{Wang2024FedAF,
+  title     = {An Aggregation-Free Federated Learning for Tackling Data Heterogeneity},
+  author    = {Wang, Shixiong and others},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2024},
+  url       = {https://openaccess.thecvf.com/content/CVPR2024/papers/Wang_An_Aggregation-Free_Federated_Learning_for_Tackling_Data_Heterogeneity_CVPR_2024_paper.pdf}
 }
+
 ```
 
 ## License
