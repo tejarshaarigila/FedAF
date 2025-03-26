@@ -19,6 +19,7 @@ jobs:
         uses: actions/setup-java@v2
         with:
           java-version: '17'
+          distribution: 'adoptopenjdk'
 
       - name: Cache Maven dependencies
         uses: actions/cache@v3
@@ -33,5 +34,5 @@ jobs:
 
       - name: Run SonarQube analysis
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}  # Use secret here
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: mvn sonar:sonar -Dsonar.host.url=http://localhost:9000 -Dsonar.login=$SONAR_TOKEN
