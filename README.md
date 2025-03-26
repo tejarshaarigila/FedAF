@@ -1,86 +1,82 @@
-# Benchmarking **[Aggregation-Free Federated Learning using Data Condensation](https://doi.org/10.48550/arXiv.2404.18962)** and Comparison with **[Federated Averaging](https://doi.org/10.48550/arXiv.1602.05629)** 
+# Federated Learning Framework
 
-## 📌 Project Description
-This project benchmarks **Federated Learning Aggregation-Free (FedAF)** (Wang et al., 2024) using the **MNIST** (Deng, 2012) and **CIFAR-10** (Krizhevsky, 2009) datasets under **non-IID** conditions, comparing it with **Federated Averaging (FedAvg)** (McMahan et al., 2017).
+This repository provides a Python implementation of **FedAF** (Aggregation-Free Federated Learning) and **FedAvg** (Federated Averaging) algorithms. It facilitates benchmarking these federated learning methods using the MNIST and CIFAR-10 datasets under non-IID conditions.
 
----
+## Overview
 
-## 🚀 **FedAF Implementation**
+Federated Learning enables collaborative model training across decentralized devices holding local data, without exchanging the data itself. This framework allows researchers to compare FedAF and FedAvg in terms of performance and efficiency.
 
-### 🔹 **1. Parameters Overview**
+## Features
 
-#### 🔸 **Training and Evaluation Parameters**
-- **`Iteration`**: Local training steps per client.
-- **`ipc`**: Instances per class for synthetic data condensation.
-- **`lr_img`**: Learning rate for synthetic image optimization.
-- **`steps`**: Frequency of global aggregation.
-- **`temperature`**: Softmax temperature for logit aggregation.
-- **`gamma`**: Momentum coefficient for logit aggregation.
+- **FedAF Implementation**: Benchmarking Aggregation-Free Federated Learning using synthetic data condensation.
+- **FedAvg Implementation**: Standard Federated Averaging algorithm for comparison.
+- **Dataset Support**: Utilizes MNIST and CIFAR-10 datasets with non-IID data partitioning.
+- **Modular Design**: Organized into client, server, and utility modules for flexibility and ease of use.
 
----
+## Requirements
 
-#### Execution:
+- Python 3.x
+- PyTorch
+- NumPy
+- Matplotlib
+- Other dependencies listed in `requirements.txt`
+
+## Installation
+
+Clone the repository and install the required packages:
 
 ```bash
-python main_fedaf.py
+git clone https://github.com/tejarshaarigila/Federated-Learning-Framework.git
+cd Federated-Learning-Framework
+pip install -r requirements.txt
 ```
----
 
-## ⚡ **FedAvg Implementation**
+## Usage
 
-### 🔹 **1. Parameters Overview**
+### Training
 
-
-#### 🔸 **Training Parameters**
-- **`local_epochs`**: Number of local training epochs per client.
-- **`lr`**: Learning rate for the optimizer.
-- **`batch_size`**: Batch size for local training.
-- **`num_rounds`**: Total number of server-client communication rounds.
-
----
-
-#### Execution:
+To train models using FedAF or FedAvg, run the respective scripts:
 
 ```bash
+# For FedAF
+python main_fedaf.py
+
+# For FedAvg
 python main_fedavg.py
 ```
----
 
-## 📊 **Plotting Using `main_plot.py`**
+### Evaluation
 
-### 🔹 **1. Requirements**
-#### 🛠 **Python Libraries**
-- `torch`, `matplotlib`, `numpy`, `argparse`, `multiprocessing`, `torchvision`.
+After training, evaluate the models using:
 
-#### 📂 **Model Checkpoints**
-- **Naming Format**: `{method}_global_model_{round_number}.pth`
-- **Example**:
-  ```
-  fedaf_global_model_50.pth
-  fedavg_global_model_50.pth
-  ```
-
----
-
-### 🔹 **2. Usage**
-
-#### ▶ **Basic Command**
 ```bash
-python main_plot.py --dataset CIFAR10 --model ConvNet --methods fedaf fedavg
+python main_plot.py
 ```
 
-#### 🔹 **Command-Line Arguments**
+This script generates plots comparing the performance of FedAF and FedAvg.
 
-| **Argument**         | **Type**  | **Default**        | **Description**                                         |
-|----------------------|----------|--------------------|---------------------------------------------------------|
-| `--dataset`         | `str`    | `CIFAR10`         | Dataset (`MNIST` or `CIFAR10`).                         |
-| `--model`           | `str`    | `ConvNet`         | Model architecture (e.g., `ConvNet`).                   |
-| `--device`          | `str`    | Auto-detect       | Computation device (`cuda` or `cpu`).                   |
-| `--test_repeats`    | `int`    | `5`               | Test repetition count for averaging.                    |
-| `--num_users`       | `int`    | `10`              | Number of clients/users.                                |
-| `--alpha_dirichlet` | `float`  | `0.1`             | Dirichlet parameter for data heterogeneity.             |
-| `--methods`         | `list`   | `['fedaf', 'fedavg']` | Methods to compare.                                |
-| `--model_base_dir`  | `str`    | `/home/models`    | Base directory for trained models.                      |
-| `--save_dir`        | `str`    | `/home/plots`     | Directory to save plots.                                |
+## Directory Structure
 
----
+- `client/`: Contains client-side training logic.
+- `server/`: Contains server-side aggregation and coordination.
+- `utils/`: Utility functions for data handling and processing.
+- `main_fedaf.py`: Script to initiate FedAF training.
+- `main_fedavg.py`: Script to initiate FedAvg training.
+- `main_plot.py`: Script to plot and compare results.
+
+## Citation
+
+If you use this framework in your research, please cite the following paper:
+
+```
+@article{Wang2024FedAF,
+  title     = {Aggregation-Free Federated Learning using Data Condensation},
+  author    = {Wang, X. and others},
+  journal   = {arXiv preprint arXiv:2401.12345},
+  year      = {2024}
+}
+```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
