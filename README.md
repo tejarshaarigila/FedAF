@@ -30,13 +30,6 @@ python main_fedaf.py
 
 ### 🔹 **1. Parameters Overview**
 
-#### 🔸 **Model Parameters**
-- **`model`**: Model architecture used for local training:
-  - `'ConvNet'`: Convolutional Neural Network.
-  - `'ResNet'`: Residual Network.
-- **`device`**: Training device:
-  - `'cuda'`: If GPU is available.
-  - `'cpu'`: Otherwise.
 
 #### 🔸 **Training Parameters**
 - **`local_epochs`**: Number of local training epochs per client.
