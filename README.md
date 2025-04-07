@@ -26,7 +26,7 @@ Federated Learning enables collaborative model training across decentralized dev
 Clone the repository and install the required packages:
 
 ```bash
-git clone https://github.com/tejarshaarigila/Federated-Learning-Framework.git
+git clone https://github.com/tejarshaarigila/FedAF.git
 cd Federated-Learning-Framework
 ```
 
