@@ -1,6 +1,6 @@
 # Federated Learning Framework
 
-This repository provides a Python implementation of **FedAF** (Aggregation-Free Federated Learning) and **FedAvg** (Federated Averaging) algorithms. It facilitates benchmarking these federated learning methods using the MNIST and CIFAR-10 datasets under non-IID conditions.
+Python implementation of **FedAF (CVPR 2024)** (Aggregation-Free Federated Learning) and **FedAvg** (Federated Averaging) Frameworks.
 
 ## Overview
 
