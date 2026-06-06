@@ -1,0 +1,64 @@
+# ============================================================================
+#  FedAF / FedAvg - SINGLE SOURCE OF TRUTH
+# ----------------------------------------------------------------------------
+#  Every script (main_fedaf.py, main_fedavg.py, main_plot.py and the server /
+#  client / utils modules) reads its settings from this file via config.py.
+#  Edit values HERE; they propagate everywhere. Per-run overrides are possible
+#  on the command line, e.g.:
+#       python main_fedaf.py --dataset FMNIST --rounds 5
+#  A different config file can be selected with `--config path.yaml` or the
+#  FEDAF_CONFIG environment variable.
+# ============================================================================
+
+# ---- What to run -----------------------------------------------------------
+dataset: CIFAR10        # MNIST | FMNIST | CIFAR10 | CIFAR100  (see config.py registry)
+model: ConvNet          # ConvNet | MLP | LeNet | AlexNet | VGG11 | ResNet18 | ...
+device: auto            # auto | cuda | cpu
+seed: 42
+
+# ---- Federated setup (shared by FedAF and FedAvg) --------------------------
+num_clients: 10         # paper: K = 10 for the label-skew experiments
+alpha: 0.1              # Dirichlet label-skew alpha (paper: 0.02 / 0.05 / 0.1)
+rounds: 20              # communication rounds (paper: 20 for label skew)
+honesty_ratio: 1        # fraction of honest clients (1 = all honest)
+
+# ---- Restartability --------------------------------------------------------
+# When true, a run resumes where it left off: completed rounds are skipped and,
+# within a round, completed phases (per-client logits, condensation, soft
+# labels, and the trained server model) are skipped using saved artifacts.
+resume: true
+
+# ---- FedAF hyperparameters -------------------------------------------------
+fedaf:
+  ipc: 50               # images per class (paper: 10/20/50/80/100)
+  iteration: 1000       # local data-condensation steps
+  eval_mode: SS         # SS/S -> periodic synthetic-image snapshots; else final only
+  global_epochs: 500    # server global-model training epochs
+  global_lr: 0.001      # server global-model learning rate
+  server_batch_size: 256
+  loc_cdc: 0.0001       # lambda_loc  (collaborative data condensation, CDC)
+  loc_lgkm: 0.01        # lambda_glob (local-global knowledge matching, LGKM)
+  temperature: 2.0      # softmax temperature for soft labels
+  gamma: 0.9            # model re-sampling coefficient (Eq. 17)
+  init: real            # synthetic-image init: 'real' (from real samples) or 'noise'
+  lr_img: null          # synthetic-image LR; null -> per-dataset default (registry)
+
+# ---- FedAvg hyperparameters ------------------------------------------------
+fedavg:
+  local_epochs: 10
+  lr: 0.01
+  batch_size: 64
+
+# ---- Output locations (relative paths are resolved against the repo root) ---
+paths:
+  data: ./data          # datasets are downloaded here
+  logits: ./logits      # per-client and aggregated V / R statistics
+  images: ./images      # synthetic-image visualisations
+  result: ./result      # condensed synthetic datasets
+  models: ./models      # saved global models (round checkpoints)
+  plots: ./plots        # comparison plots from main_plot.py
+
+# ---- Plotting (main_plot.py) -----------------------------------------------
+plot:
+  methods: [fedaf, fedavg]
+  test_repeats: 5

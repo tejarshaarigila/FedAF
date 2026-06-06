@@ -1,297 +1,181 @@
 # main_fedaf.py
+#
+# FedAF (Aggregation-Free Federated Learning) driver.
+#
+# All settings come from config.yaml via config.load_config('fedaf') -- there is
+# no per-script ARGS class any more, so dataset / model / client-count / paths /
+# hyperparameters are configured in exactly one place and shared with FedAvg and
+# the plotter.
+#
+# Restartability (cfg.resume): a run resumes where it stopped. A round whose
+# server model already exists is skipped; within a round each phase is skipped
+# when its artifacts are present:
+#   * Phase 1 (per-client V_{k,c})      -> logits/Client_*/Round_r/Vkc_*.pt
+#   * Phase 1 aggregation               -> logits/Global/Round{r}_Global_Vc.pt
+#   * Phase 2 condensation (per client) -> result/Client_*/res_*_Round{r}.pt
+#   * Phase 2 soft labels (per client)  -> logits/Client_*/Round_r/Rkc_*.pt
+#   * Phase 2 aggregation               -> logits/Global/Round{r}_Global_Rc.pt
+#   * Server global-model update         -> models/.../fedaf_global_model_{r}.pth
 
 import os
-import copy
 import time
 import numpy as np
 import torch
 from torch.utils.data import Subset
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from config import load_config, Config, all_class_files_exist
 from client.client_fedaf import Client
 from server.server_fedaf import server_update
-from utils.utils_fedaf import get_network, get_base_dataset, save_aggregated_logits, ensure_directory_exists
+from utils.utils_fedaf import get_network, get_base_dataset, save_aggregated_logits
 
-class ARGS:
-    def __init__(self):
-        self.dataset = 'CIFAR10'  # or 'CIFAR10'
-        self.model = 'ConvNet'
-        self.model_name = self.model
-        self.method = 'DM'
-        self.init = 'real'
-        self.data_path = '/home/data'
-        self.logits_dir = '/home/logits'
-        self.save_image_dir = '/home/images'
-        self.save_path = '/home/result'
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.ipc = 50  # Instances Per Class
-        self.eval_mode = 'SS'
-        self.Iteration = 1000  # Local Steps
-        self.lr_img = 1
-        self.num_partitions = 15
-        self.alpha = 0.1  # Dirichlet distribution parameter
-        self.steps = 500  # Global Steps
-        self.loc_cdc = 0.8
-        self.loc_lgkm = 0.8
-        self.temperature = 2.0
-        self.gamma = 0.9
-        self.honesty_ratio = 1
-        self.model_dir = f'/home//models/{self.dataset}/{self.model}/{self.num_partitions}/{self.honesty_ratio}'
-        if self.dataset == 'MNIST':
-            self.channel = 1
-            self.num_classes = 10
-            self.im_size = (28, 28)
-            self.mean = [0.1307]
-            self.std = [0.3081]
-        elif self.dataset == 'CIFAR10':
-            self.channel = 3
-            self.num_classes = 10
-            self.im_size = (32, 32)
-            self.mean = [0.4914, 0.4822, 0.4465]
-            self.std = [0.2023, 0.1994, 0.2010]
-            
-    @classmethod
-    def from_dict(cls, args_dict):
-        args = cls()
-        for key, value in args_dict.items():
-            setattr(args, key, value)
-        return args
 
-def initialize_global_model(args):
-    """
-    Initializes a random global model and saves it so that clients can access it.
-    """
-    model = get_network(args.model, args.channel, args.num_classes, args.im_size)
-    model_dir = args.model_dir
-    os.makedirs(model_dir, exist_ok=True)
-    model_path = os.path.join(model_dir, 'fedaf_global_model_0.pth')
-    torch.save(model.state_dict(), model_path)
-    print(f"Global model initialized and saved to {model_path}.")
+def initialize_global_model(cfg):
+    model = get_network(cfg.model, cfg.channel, cfg.num_classes, cfg.im_size)
+    os.makedirs(cfg.model_dir, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(cfg.model_dir, 'fedaf_global_model_0.pth'))
+    print("Global model initialized.")
 
-def simulate(rounds):
-    args = ARGS()
-    np.random.seed(42)
-    torch.manual_seed(42)
-    args.eval_it_pool = (
-        np.arange(0, args.Iteration + 1, args.steps).tolist()
-        if args.eval_mode in ['S', 'SS']
-        else [args.Iteration]
-    )  # The list of iterations when we evaluate models and record results.
 
-    # Create necessary directories
-    os.makedirs(args.model_dir, exist_ok=True)
-    os.makedirs(args.save_path, exist_ok=True)
-    os.makedirs(args.data_path, exist_ok=True)
-    os.makedirs(args.logits_dir, exist_ok=True)
-    os.makedirs(args.save_image_dir, exist_ok=True)
-
-    # Load and partition the dataset once
-    base_dataset = get_base_dataset(args.dataset, args.data_path, train=True)
+def partition_indices(base_dataset, cfg):
+    """Dirichlet label-skew partition of the dataset across cfg.num_clients."""
     labels = np.array(base_dataset.targets)
-    indices = [[] for _ in range(args.num_partitions)]
-
-    # Partitioning logic
-    num_classes = args.num_classes
-    num_partitions = args.num_partitions
-    alpha = args.alpha
-
-    for c in range(num_classes):
+    indices = [[] for _ in range(cfg.num_clients)]
+    for c in range(cfg.num_classes):
         class_indices = np.where(labels == c)[0]
         np.random.shuffle(class_indices)
-        proportions = np.random.dirichlet(np.repeat(alpha, num_partitions))
+        proportions = np.random.dirichlet(np.repeat(cfg.alpha, cfg.num_clients))
         proportions = (np.cumsum(proportions) * len(class_indices)).astype(int)[:-1]
-        class_splits = np.split(class_indices, proportions)
-        for idx in range(num_partitions):
-            if idx < len(class_splits):
-                indices[idx].extend(class_splits[idx])
+        for idx, split in enumerate(np.split(class_indices, proportions)):
+            indices[idx].extend(split)
+    return indices
 
-    data_partition_indices = indices  # Use indices directly
 
-    # Initialize the global model and save it
-    if not os.path.exists(os.path.join(args.model_dir, 'fedaf_global_model_0.pth')):
+def simulate(cfg=None):
+    cfg = cfg or load_config('fedaf')
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    cfg.ensure_dirs()
+
+    print(f"[FedAF] dataset={cfg.dataset} model={cfg.model} K={cfg.num_clients} "
+          f"alpha={cfg.alpha} rounds={cfg.rounds} ipc={cfg.ipc} device={cfg.device} "
+          f"resume={cfg.resume}")
+
+    base_dataset = get_base_dataset(cfg, train=True)
+    data_partition_indices = partition_indices(base_dataset, cfg)
+
+    if not os.path.exists(os.path.join(cfg.model_dir, 'fedaf_global_model_0.pth')):
         print("[+] Initializing Global Model")
-        initialize_global_model(args)
+        initialize_global_model(cfg)
 
-    # Prepare client IDs
-    client_ids = list(range(args.num_partitions))
+    client_ids = list(range(cfg.num_clients))
+    cfg_dict = cfg.to_dict()
 
-    # Prepare picklable arguments
-    args_dict = copy.deepcopy(vars(args))
-    args_dict['device'] = str(args.device)  # Convert torch.device to string
+    for r in range(1, cfg.rounds + 1):
+        server_model_path = cfg.method_model_path('fedaf', r)
+        if cfg.resume and os.path.exists(server_model_path):
+            print(f"--- Round {r}/{cfg.rounds}: already complete, skipping. ---")
+            continue
+        print(f"--- Round {r}/{cfg.rounds} ---")
 
-    # Main communication rounds
-    for r in range(1, rounds + 1):
-        print(f"--- Round {r}/{rounds} ---")
+        # ---- Phase 1: clients compute v_{k,c} on REAL data with the clean model ----
+        global_V_path = os.path.join(cfg.logits_dir, 'Global', f'Round{r}_Global_Vc.pt')
+        if cfg.resume and os.path.exists(global_V_path):
+            print(f"[resume] Phase 1 (V) already aggregated for round {r}.")
+        else:
+            _run_clients(client_compute_Vkc, client_ids, data_partition_indices,
+                         cfg_dict, r, base_dataset, "client_compute_Vkc")
+            save_aggregated_logits(aggregate_logits(cfg, 'V', r), cfg, r, 'V')
 
-        # Phase 1: Clients compute Vkc
-        with ProcessPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    client_compute_Vkc,
-                    client_id,
-                    data_partition_indices[client_id],
-                    args_dict,
-                    r,
-                    base_dataset
-                )
-                for client_id in client_ids
-            ]
-            # Wait for all clients to finish computing Vkc
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"Error in client_compute_Vkc: {e}")
+        # ---- Phase 2: condensation (+ re-sampling) and r_{k,c} on REAL data ----
+        global_R_path = os.path.join(cfg.logits_dir, 'Global', f'Round{r}_Global_Rc.pt')
+        if cfg.resume and os.path.exists(global_R_path):
+            print(f"[resume] Phase 2 (R) already aggregated for round {r}.")
+        else:
+            _run_clients(client_data_condensation_and_Rkc, client_ids, data_partition_indices,
+                         cfg_dict, r, base_dataset, "client_data_condensation_and_Rkc")
+            save_aggregated_logits(aggregate_logits(cfg, 'R', r), cfg, r, 'R')
 
-        # Server aggregates V logits and saves aggregated logits for clients
-        aggregated_V_logits = aggregate_logits(client_ids, args.num_classes, 'V', args, r)
-        save_aggregated_logits(aggregated_V_logits, args, r, 'V')
+        # ---- Server trains the global model (CE + LGKM) ----
+        server_update(cfg, r)
 
-        # Phase 2: Clients perform data condensation and compute Rkc
-        with ProcessPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    client_data_condensation_and_Rkc,
-                    client_id,
-                    data_partition_indices[client_id],
-                    args_dict,
-                    r,
-                    base_dataset
-                )
-                for client_id in client_ids
-            ]
-            # Wait for all clients to finish data condensation and Rkc computation
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"Error in client_data_condensation_and_Rkc: {e}")
 
-        # Server aggregates R logits and saves aggregated logits
-        aggregated_R_logits = aggregate_logits(client_ids, args.num_classes, 'R', args, r)
-        save_aggregated_logits(aggregated_R_logits, args, r, 'R')
+def _run_clients(fn, client_ids, data_partition_indices, cfg_dict, r, base_dataset, label):
+    with ProcessPoolExecutor() as ex:
+        futs = [ex.submit(fn, cid, data_partition_indices[cid], cfg_dict, r, base_dataset)
+                for cid in client_ids]
+        for f in as_completed(futs):
+            try:
+                f.result()
+            except Exception as e:
+                print(f"Error in {label}: {e}")
 
-        # Step 6: Server updates the global model using aggregated R logits and synthetic data
-        server_update(
-            model_name=args.model,
-            data=args.dataset,
-            num_partitions=args.num_partitions,
-            round_num=r,
-            lambda_glob=args.loc_lgkm,
-            ipc=args.ipc,
-            method=args.method,
-            hratio=args.honesty_ratio,
-            temperature=args.temperature,
-            num_epochs=args.steps,
-            device=args.device,
-        )
 
-def client_compute_Vkc(client_id, data_partition_indices, args_dict, r, base_dataset):
-    # Reconstruct args
-    args = ARGS.from_dict(args_dict)
-    args.device = torch.device(args.device)
-
-    # Reconstruct data_partition
-    data_partition = Subset(base_dataset, data_partition_indices)
-
-    # Create client instance
-    client = Client(client_id, data_partition, args)
-
-    # Load and resample the model once
-    client.model = client.load_global_model()
-    client.resample_model(client.model)
-
-    # Run Vkc computation
+def client_compute_Vkc(client_id, data_partition_indices, cfg_dict, r, base_dataset):
+    cfg = Config.from_dict(cfg_dict)
+    vkc_path = os.path.join(cfg.logits_dir, f'Client_{client_id}', f'Round_{r}')
+    if cfg.resume and all_class_files_exist(vkc_path, 'V', cfg.num_classes):
+        print(f"[resume] Client {client_id}: Vkc already done for round {r}.")
+        return
+    client = Client(client_id, Subset(base_dataset, data_partition_indices), cfg)
+    client.model = client.load_global_model()       # CLEAN global model (no resample)
     client.run_Vkc(r)
 
-def client_data_condensation_and_Rkc(client_id, data_partition_indices, args_dict, r, base_dataset):
-    # Reconstruct args
-    args = ARGS.from_dict(args_dict)
-    args.device = torch.device(args.device)
 
-    # Reconstruct data_partition
-    data_partition = Subset(base_dataset, data_partition_indices)
+def client_data_condensation_and_Rkc(client_id, data_partition_indices, cfg_dict, r, base_dataset):
+    cfg = Config.from_dict(cfg_dict)
+    client = Client(client_id, Subset(base_dataset, data_partition_indices), cfg)
+    client.model = client.load_global_model()       # CLEAN global model (kept for R)
 
-    # Create client instance
-    client = Client(client_id, data_partition, args)
-
-    # Load the model (if necessary)
-    client.model = client.load_global_model()
-    client.resample_model(client.model)
-
-    # Wait for the server to aggregate Vc
-    print(f"Client {client_id} is waiting for global Vc aggregation.")
-    global_Vc_path = os.path.join(args.logits_dir, 'Global', f'Round{r}_Global_Vc.pt')
+    global_Vc_path = os.path.join(cfg.logits_dir, 'Global', f'Round{r}_Global_Vc.pt')
     while not os.path.exists(global_Vc_path):
-        time.sleep(1)  # Wait for 1 second before checking again
-    print(f"Client {client_id} received signal to proceed.")
+        time.sleep(1)
 
-    # Proceed to data condensation and Rkc computation
-    client.run_data_condensation(r)
-    client.run_Rkc(r)
+    # Condensation (re-samples per step internally) -- skip if already saved.
+    if cfg.resume and os.path.exists(client.synthetic_save_path(r)):
+        print(f"[resume] Client {client_id}: synthetic data already done for round {r}.")
+    else:
+        client.run_data_condensation(r)
 
-def aggregate_logits(client_ids, num_classes, v_r, args, r):
+    # Soft labels r_{k,c} from real data + clean model -- skip if already saved.
+    rkc_path = os.path.join(cfg.logits_dir, f'Client_{client_id}', f'Round_{r}')
+    if cfg.resume and all_class_files_exist(rkc_path, 'R', cfg.num_classes):
+        print(f"[resume] Client {client_id}: Rkc already done for round {r}.")
+    else:
+        client.run_Rkc(r)
+
+
+def aggregate_logits(cfg, v_r, r):
+    """Aggregate per-client class statistics into a [C, C] matrix.
+
+    Each row c is the mean of v_{k,c} (or r_{k,c}) over the clients that own
+    class c (count > 0). Classes owned by nobody stay as a zero row (for R the
+    server clamps + renormalises a zero row to uniform).
     """
-    Aggregates class-wise logits from all clients into a tensor of shape [num_classes,].
-
-    Args:
-        client_ids (list): List of client IDs.
-        num_classes (int): Number of classes.
-        v_r (str): Type of logits ('V' or 'R').
-        args (ARGS): Argument parser containing configurations.
-        r (int): Current round number.
-
-    Returns:
-        torch.Tensor: Aggregated logits Rc of shape [num_classes,].
-    """
-    aggregated_logits = torch.zeros(num_classes, device=args.device)
-    count = torch.zeros(num_classes, device=args.device)
-
-    for client_id in client_ids:
-        client_logit_path = os.path.join(args.logits_dir, f'Client_{client_id}', f'Round_{r}')
+    num_classes = cfg.num_classes
+    agg = torch.zeros(num_classes, num_classes, device=cfg.device)
+    cnt = torch.zeros(num_classes, device=cfg.device)
+    for cid in range(cfg.num_clients):
+        base = os.path.join(cfg.logits_dir, f'Client_{cid}', f'Round_{r}')
         for c in range(num_classes):
-            client_Vkc_path = os.path.join(client_logit_path, f'{v_r}kc_{c}.pt')
-            if os.path.exists(client_Vkc_path):
-                try:
-                    client_logit = torch.load(client_Vkc_path, map_location=args.device)
-                    if isinstance(client_logit, torch.Tensor):
-                        if client_logit.numel() == num_classes:
-                            # Accumulate the logit value at index c
-                            aggregated_logits[c] += client_logit[c]
-                            count[c] += 1
-                        else:
-                            print(f"Server: Client {client_id} logits for class {c} have incorrect number of elements. Expected {num_classes}, got {client_logit.numel()}. Skipping.")
-                    else:
-                        print(f"Server: Client {client_id} logits for class {c} are not tensors. Skipping.")
-                except Exception as e:
-                    print(f"Server: Failed to load logits for Client {client_id}, Class {c} - {e}")
-            else:
-                print(f"Server: Client {client_id} has no logits for class {c}. Skipping.")
+            p = os.path.join(base, f'{v_r}kc_{c}.pt')
+            if not os.path.exists(p):
+                continue
+            try:
+                d = torch.load(p, map_location=cfg.device)
+                value = d['value'] if isinstance(d, dict) else d
+                count = (d.get('count', 1) if isinstance(d, dict) else 1)
+                if isinstance(value, torch.Tensor) and value.numel() == num_classes and count > 0:
+                    agg[c] += value.to(cfg.device).view(-1)
+                    cnt[c] += 1
+            except Exception as e:
+                print(f"Server: failed to load {v_r}kc for client {cid}, class {c} - {e}")
+    denom = torch.where(cnt == 0, torch.ones_like(cnt), cnt).unsqueeze(1)
+    M = agg / denom
+    print(f"Server: aggregated {v_r} matrix {tuple(M.shape)} "
+          f"({int((cnt > 0).sum())}/{num_classes} classes populated).")
+    return M
 
-    # Avoid division by zero
-    count = torch.where(count == 0, torch.ones_like(count), count)
-
-    # Average the logits per class
-    Rc = aggregated_logits / count  # Shape: [num_classes,]
-
-    print(f"Server: Aggregated {v_r} logits computed with Rc shape {Rc.shape}.")
-
-    return Rc
-
-def save_aggregated_logits(aggregated_logits, args, r, v_r):
-    """
-    Saves the aggregated logits to a global directory accessible by all clients.
-
-    Args:
-        aggregated_logits (torch.Tensor): Aggregated logits Rc of shape [num_classes,].
-        args (ARGS): Argument parser containing configurations.
-        r (int): Current round number.
-        v_r (str): Type of logits ('V' or 'R').
-    """
-    logits_dir = os.path.join(args.logits_dir, 'Global')
-    os.makedirs(logits_dir, exist_ok=True)
-    global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
-    torch.save(aggregated_logits, global_logits_path)  # Saving single tensor
-    print(f"Server: Aggregated {v_r} logits saved to {global_logits_path}.")
 
 if __name__ == '__main__':
-    simulate(rounds=20)
+    simulate()

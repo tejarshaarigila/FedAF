@@ -1,181 +1,197 @@
-# utils_fedaf.py
+# utils_fedaf.py  (corrected)
+#
+# Key fixes vs. original:
+#   * compute_swd is now a *real*, fully-differentiable Sliced Wasserstein
+#     Distance implemented in torch (no .detach()/numpy -> gradients now flow
+#     back to the synthetic images, so the CDC term actually trains the data).
+#   * calculate_logits_labels:
+#       - 'R' soft labels are softmax-of-the-mean-logit (Eq. 11), not
+#         mean-of-softmax, and are computed from REAL data (see client).
+#       - per-class results are saved as a dict {'value': [C], 'count': n} so
+#         the server can build the FULL [C, C] class-logit matrix and average
+#         only over clients that actually own each class.
+#       - a class is averaged over *all* its available samples (no IPC
+#         threshold that silently zeroed sparse classes under heavy skew).
 
 import os
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Subset, DataLoader
+from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from scipy.stats import wasserstein_distance
 import logging
+from config import DATASET_REGISTRY, TORCHVISION_DATASET
 from utils.networks import (
     MLP, ConvNet, LeNet, AlexNet, AlexNetBN,
     VGG11, VGG11BN, ResNet18, ResNet18BN_AP, ResNet18BN
 )
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def compute_swd(logits1, logits2, num_projections=100):
-    """
-    Computes the Sliced Wasserstein Distance (SWD) between two sets of logits.
-    """
-    if isinstance(logits1, torch.Tensor):
-        logits1 = logits1.detach().cpu().numpy()
-    if isinstance(logits2, torch.Tensor):
-        logits2 = logits2.detach().cpu().numpy()
 
-    # Check if logits are valid arrays
-    if logits1.ndim == 0 or logits2.ndim == 0:
-        return 0.0  # Return zero distance if logits are scalars or zero-dimensional
+# --------------------------------------------------------------------------- #
+#  Sliced Wasserstein Distance (differentiable, torch-native)                  #
+# --------------------------------------------------------------------------- #
+def _match_quantiles(sorted_vals, n):
+    """Linearly resample sorted samples (along dim 0) to `n` quantiles.
+    sorted_vals: [N, P] already sorted along dim 0. Returns [n, P]."""
+    N = sorted_vals.shape[0]
+    if N == n:
+        return sorted_vals
+    x = sorted_vals.transpose(0, 1).unsqueeze(1)          # [P, 1, N]
+    x = F.interpolate(x, size=n, mode='linear', align_corners=True)
+    return x.squeeze(1).transpose(0, 1)                    # [n, P]
 
-    dimensions = logits1.shape[0]
-    if dimensions == 0:
-        return 0.0  # Return zero distance if dimension is zero
 
-    # Generate projections
-    projections = np.random.normal(0, 1, (num_projections, dimensions))
-    projections /= np.linalg.norm(projections, axis=1, keepdims=True)
-
-    # Project the logits
-    projected_logits1 = projections.dot(logits1)
-    projected_logits2 = projections.dot(logits2)
-
-    # Compute Wasserstein distance for each projection
-    distances = []
-    for i in range(num_projections):
-        distance = wasserstein_distance([projected_logits1[i]], [projected_logits2[i]])
-        distances.append(distance)
-    average_distance = np.mean(distances)
-    return average_distance
-
-def calculate_logits_labels(model_net, partition, num_classes, device, path, ipc, temperature, logits_type='V'):
-    """
-    Calculates and saves class-wise averaged logits (V(k,c)) or probabilities (R(k,c)).
+def compute_swd(x, y, num_projections=128):
+    """Squared Sliced-Wasserstein-2 distance between two empirical samples.
 
     Args:
-        model_net (torch.nn.Module): The global model.
-        partition (torch.utils.data.Dataset or DataLoader): Data to use for calculations.
-        num_classes (int): Number of classes.
-        device (torch.device): Device to perform computations on.
-        path (str): Directory path to save logits.
-        ipc (int): Instances per class.
-        temperature (float): Temperature parameter for softmax.
-        logits_type (str): 'V' for Vkc logits, 'R' for Rkc logits.
-    """
+        x, y: torch tensors of shape [N, D] (a set of N points in R^D) or [D]
+              (treated as a single point, i.e. a point mass).
+        num_projections: number of random 1-D slices.
 
-    # Create subdirectories if they don't exist
+    Returns:
+        Scalar torch tensor (keeps the autograd graph of x / y).
+
+    Note on FedAF usage: peers only share the class mean v_c, so on the global
+    side we pass a point mass (v_c tiled to the synthetic batch size). SWD to a
+    point mass equals the mean squared logit deviation toward v_c -- exactly the
+    'pull synthetic class-c logits toward the aggregated global logit' that the
+    CDC term is meant to do, while preserving per-class correspondence.
+    """
+    if x.dim() == 1:
+        x = x.unsqueeze(0)
+    if y.dim() == 1:
+        y = y.unsqueeze(0)
+    D = x.shape[1]
+    proj = torch.randn(D, num_projections, device=x.device, dtype=x.dtype)
+    proj = proj / (proj.norm(dim=0, keepdim=True) + 1e-12)   # unit directions
+
+    x_proj = x @ proj                                        # [Nx, P]
+    y_proj = y @ proj                                        # [Ny, P]
+
+    x_sorted, _ = torch.sort(x_proj, dim=0)
+    y_sorted, _ = torch.sort(y_proj, dim=0)
+
+    if x_sorted.shape[0] != y_sorted.shape[0]:
+        n = max(x_sorted.shape[0], y_sorted.shape[0])
+        x_sorted = _match_quantiles(x_sorted, n)
+        y_sorted = _match_quantiles(y_sorted, n)
+
+    return ((x_sorted - y_sorted) ** 2).mean()
+
+
+# --------------------------------------------------------------------------- #
+#  Class-wise logits / soft labels                                             #
+# --------------------------------------------------------------------------- #
+def calculate_logits_labels(model_net, partition, num_classes, device, path,
+                            ipc, temperature, logits_type='V'):
+    """Compute and save class-wise statistics.
+
+    'V': per-class MEAN LOGIT vector  v_{k,c}            (Eq. 5)   -> [C]
+    'R': per-class SOFT LABEL          r_{k,c}=softmax(v_{k,c}/T)  (Eq. 11) -> [C]
+
+    Saved per class c as a dict {'value': tensor[C], 'count': int} in
+    f'{logits_type}kc_{c}.pt'. `count` is the number of real samples of class c
+    owned by this client (0 => class absent, skipped during aggregation).
+    """
     os.makedirs(path, exist_ok=True)
 
-    # If partition is a DataLoader, use it directly; otherwise, create a DataLoader
-    if isinstance(partition, DataLoader):
-        dataloader = partition
-    else:
-        dataloader = DataLoader(partition, batch_size=256, shuffle=False)
+    dataloader = partition if isinstance(partition, DataLoader) \
+        else DataLoader(partition, batch_size=256, shuffle=False)
 
-    # Initialize storage for logits
-    logits_by_class = [torch.empty((0, num_classes), device=device) for _ in range(num_classes)]
+    sum_logits = [torch.zeros(num_classes, device=device) for _ in range(num_classes)]
+    counts = [0 for _ in range(num_classes)]
 
     model_net.eval()
     with torch.no_grad():
         for images, labels in dataloader:
-            images = images.to(device)
-            labels = labels.to(device)
-            logits = model_net(images)
+            images, labels = images.to(device), labels.to(device)
+            logits = model_net(images)                       # [B, C] (pre-softmax)
+            for i in range(labels.size(0)):
+                c = labels[i].item()
+                sum_logits[c] += logits[i]
+                counts[c] += 1
+
+    for c in range(num_classes):
+        if counts[c] > 0:
+            mean_logit = sum_logits[c] / counts[c]           # v_{k,c}
             if logits_type == 'V':
-                output = logits
+                value = mean_logit
             elif logits_type == 'R':
-                output = F.softmax(logits / temperature, dim=1)
+                value = F.softmax(mean_logit / temperature, dim=0)   # softmax-of-mean
             else:
                 raise ValueError("logits_type must be 'V' or 'R'")
-
-            for i in range(labels.size(0)):
-                label = labels[i].item()
-                logits_by_class[label] = torch.cat((logits_by_class[label], output[i].unsqueeze(0)), dim=0)
-
-    # Average logits per class
-    logits_avg = []
-    for c in range(num_classes):
-        if logits_by_class[c].size(0) >= ipc:
-            avg_logit = logits_by_class[c].mean(dim=0)
         else:
-            avg_logit = torch.zeros(num_classes, device=device)
-        logits_avg.append(avg_logit)
+            value = torch.zeros(num_classes, device=device)
+        try:
+            torch.save({'value': value.detach().cpu(), 'count': int(counts[c])},
+                       os.path.join(path, f'{logits_type}kc_{c}.pt'))
+        except Exception as e:
+            logger.error(f"Error saving {logits_type}kc logits for class {c}: {e}")
 
-    # Save the averaged logits
-    try:
-        for c in range(num_classes):
-            torch.save(logits_avg[c], os.path.join(path, f'{logits_type}kc_{c}.pt'))
-    except Exception as e:
-        logger.error(f"Error saving {logits_type}kc logits: {e}")
 
+# --------------------------------------------------------------------------- #
+#  Model / dataset helpers (unchanged behaviour)                               #
+# --------------------------------------------------------------------------- #
 def load_latest_model(model_dir, model_name, channel, num_classes, im_size, device):
-    """
-    Loads the latest global model from the model directory.
-
-    Args:
-        model_dir (str): Directory containing model checkpoints.
-        model_name (str): Name of the model architecture.
-        channel (int): Number of input channels.
-        num_classes (int): Number of output classes.
-        im_size (tuple): Image size (height, width).
-        device (torch.device): Device to load the model on.
-
-    Returns:
-        torch.nn.Module: Loaded model.
-    """
     try:
         if os.path.exists(model_dir) and os.listdir(model_dir):
-            model_files = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if f.endswith('.pth') and f.startswith('fedaf')]
+            model_files = [os.path.join(model_dir, f) for f in os.listdir(model_dir)
+                           if f.endswith('.pth') and f.startswith('fedaf')]
             latest_model_file = max(model_files, key=os.path.getmtime, default=None)
-
             if latest_model_file:
                 net = get_network(model_name, channel, num_classes, im_size).to(device)
-                state_dict = torch.load(latest_model_file, map_location=device)
-                net.load_state_dict(state_dict)
+                net.load_state_dict(torch.load(latest_model_file, map_location=device))
                 logger.info(f"Loaded model from {latest_model_file}")
                 return net
-        # If no model exists, initialize a new one
-        logger.info("Model directory is empty or no valid model found. Initializing a new model.")
-        net = get_network(model_name, channel, num_classes, im_size).to(device)
-        return net
+        logger.info("Model directory empty/no valid model. Initializing a new model.")
+        return get_network(model_name, channel, num_classes, im_size).to(device)
     except Exception as e:
         logger.error(f"Error loading the latest model: {e}")
-        # Initialize a new model in case of error
-        net = get_network(model_name, channel, num_classes, im_size).to(device)
-        return net
+        return get_network(model_name, channel, num_classes, im_size).to(device)
 
-def get_base_dataset(dataset_name, data_path, train=True):
+
+def build_transform(dataset_name):
+    """Normalisation transform driven by the single dataset registry."""
+    meta = DATASET_REGISTRY[dataset_name]
+    return transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=meta['mean'], std=meta['std']),
+    ])
+
+
+def get_base_dataset(cfg, train=True):
+    """Train/test dataset for cfg.dataset, normalised per the registry.
+
+    Supports every dataset in config.DATASET_REGISTRY (MNIST, FMNIST, CIFAR10,
+    CIFAR100). The torchvision class is resolved through TORCHVISION_DATASET so
+    new datasets only need a registry entry, not edits here.
     """
-    Returns the base dataset without any partitioning, used for reconstructing datasets in subprocesses.
-    """
-    if dataset_name == 'CIFAR10':
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
-            # Add other necessary transformations if any
-        ])
-        dataset = datasets.CIFAR10(data_path, train=train, download=True, transform=transform)
-    elif dataset_name == 'MNIST':
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.1307], std=[0.3081]),
-            # Add other necessary transformations if any
-        ])
-        dataset = datasets.MNIST(data_path, train=train, download=True, transform=transform)
-    else:
-        raise ValueError(f"Unsupported dataset: {dataset_name}")
-    return dataset
+    if cfg.dataset not in TORCHVISION_DATASET:
+        raise ValueError(f"Unsupported dataset: {cfg.dataset}")
+    ds_cls = getattr(datasets, TORCHVISION_DATASET[cfg.dataset])
+    return ds_cls(cfg.data_path, train=train, download=True,
+                  transform=build_transform(cfg.dataset))
+
+
+def get_test_loader(cfg, batch_size=256, num_workers=0):
+    """Normalised test-set DataLoader for cfg.dataset (shared by server/plot)."""
+    test_set = get_base_dataset(cfg, train=False)
+    return DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
 
 def get_network(model, channel, num_classes, im_size=(32, 32)):
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
-
     if model == 'MLP':
         net = MLP(channel=channel, num_classes=num_classes)
     elif model == 'ConvNet':
-        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
+        net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width,
+                      net_depth=net_depth, net_act=net_act, net_norm=net_norm,
+                      net_pooling=net_pooling, im_size=im_size)
     elif model == 'LeNet':
         net = LeNet(channel=channel, num_classes=num_classes)
     elif model == 'AlexNet':
@@ -183,7 +199,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32)):
     elif model == 'AlexNetBN':
         net = AlexNetBN(channel=channel, num_classes=num_classes)
     elif model == 'VGG11':
-        net = VGG11( channel=channel, num_classes=num_classes)
+        net = VGG11(channel=channel, num_classes=num_classes)
     elif model == 'VGG11BN':
         net = VGG11BN(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18':
@@ -193,20 +209,16 @@ def get_network(model, channel, num_classes, im_size=(32, 32)):
     elif model == 'ResNet18BN':
         net = ResNet18BN(channel=channel, num_classes=num_classes)
     else:
-        net = None
-        exit('unknown model: %s'%model)
+        exit('unknown model: %s' % model)
+    return net.to('cpu')
 
-    net = net.to('cpu')  # Adjusted to default to 'cpu' here
-
-    return net
 
 def get_default_convnet_setting():
-    """
-    Provides default settings for the ConvNet architecture.
-
-    Returns:
-        tuple: (net_width, net_depth, net_act, net_norm, net_pooling)
-    """
+    # NOTE: the paper states BatchNorm ("to facilitate comparison with FedBN").
+    # The DM/DC default (and the more stable choice for condensation) is
+    # InstanceNorm. To reproduce the paper's stated setup exactly, change
+    # net_norm to 'batchnorm' HERE *and* in utils/utils_fedavg.py so FedAF and
+    # FedAvg share the same architecture.
     net_width = 128
     net_depth = 3
     net_act = 'relu'
@@ -214,31 +226,16 @@ def get_default_convnet_setting():
     net_pooling = 'avgpooling'
     return net_width, net_depth, net_act, net_norm, net_pooling
 
-def ensure_directory_exists(path):
-    """
-    Ensures that the directory exists; if not, creates it.
 
-    Args:
-        path (str): Directory path to check and create.
-    """
+def ensure_directory_exists(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
-def save_aggregated_logits(aggregated_logits, args, r, v_r):
-    """
-    Saves the aggregated logits to a global directory accessible by all clients.
 
-    Args:
-        aggregated_logits (torch.Tensor): Aggregated logits Rc of shape [num_classes,].
-        args (ARGS): Argument parser containing configurations.
-        r (int): Current round number.
-        v_r (str): Type of logits ('V' for pre-condensation, 'R' for post-condensation).
-    """
-    try:
-        logits_dir = os.path.join(args.logits_dir, 'Global')
-        os.makedirs(logits_dir, exist_ok=True)
-        global_logits_path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
-        torch.save(aggregated_logits, global_logits_path)  # Saving single tensor
-        logger.info(f"Aggregated {v_r} logits saved to {global_logits_path}.")
-    except Exception as e:
-        logger.error(f"Error saving aggregated logits: {e}")
+def save_aggregated_logits(aggregated_logits, args, r, v_r):
+    """Save the aggregated [C, C] matrix (V or R) to the shared Global dir."""
+    logits_dir = os.path.join(args.logits_dir, 'Global')
+    os.makedirs(logits_dir, exist_ok=True)
+    path = os.path.join(logits_dir, f'Round{r}_Global_{v_r}c.pt')
+    torch.save(aggregated_logits, path)
+    logger.info(f"Aggregated {v_r} logits saved to {path} with shape {tuple(aggregated_logits.shape)}.")

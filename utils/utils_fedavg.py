@@ -7,12 +7,32 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
 import numpy as np
 import logging
+from config import DATASET_REGISTRY, TORCHVISION_DATASET
 from utils.networks import MLP, ConvNet, LeNet, AlexNet, AlexNetBN, VGG11, VGG11BN, ResNet18, ResNet18BN_AP, ResNet18BN
 import copy
 import random
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def _build_transform(dataset_name):
+    """Normalisation transform from the single dataset registry (shared with FedAF)."""
+    meta = DATASET_REGISTRY[dataset_name]
+    return transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=meta['mean'], std=meta['std']),
+    ])
+
+
+def _load_torchvision(dataset_name, data_path, train):
+    """Instantiate a registry dataset (MNIST/FMNIST/CIFAR10/CIFAR100), normalised."""
+    if dataset_name not in TORCHVISION_DATASET:
+        raise ValueError(f"Unsupported dataset: {dataset_name}. "
+                         f"Known: {sorted(TORCHVISION_DATASET)}")
+    ds_cls = getattr(datasets, TORCHVISION_DATASET[dataset_name])
+    return ds_cls(root=data_path, train=train, download=True,
+                  transform=_build_transform(dataset_name))
 
 def randomize_labels(dataset):
     """Randomly switch labels of the dataset."""
@@ -29,92 +49,49 @@ def randomize_labels(dataset):
         raise AttributeError("Dataset does not have 'targets' or 'labels' attribute.")
     return randomized_dataset
 
-def load_data(dataset, alpha, num_clients, selected_attribute='Male'):
-    """Load and partition data among clients using Dirichlet distribution for non-IID setting."""
-    logger.info("Loading %s dataset with alpha: %.4f", dataset, alpha)
-    if dataset == 'CIFAR10':
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-        full_train_dataset = datasets.CIFAR10(root='data', train=True, download=True, transform=transform)
-        test_dataset = datasets.CIFAR10(root='data', train=False, download=True, transform=transform)
-    elif dataset == 'MNIST':
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-        full_train_dataset = datasets.MNIST(root='data', train=True, download=True, transform=transform)
-        test_dataset = datasets.MNIST(root='data', train=False, download=True, transform=transform)
-    elif dataset == 'CelebA':
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
-        ])
-        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform, target_type='attr')
-        test_dataset = datasets.CelebA(root='data', split='test', download=True, transform=transform, target_type='attr')
-        
-        # Extract the 'Male' attribute index
-        attr_names = full_train_dataset.attr_names
-        if selected_attribute not in attr_names:
-            raise ValueError(f"Attribute '{selected_attribute}' not found in CelebA.")
-        attr_idx = attr_names.index(selected_attribute)
-        
-        # Binarize labels: 0 (Female), 1 (Male)
-        full_train_dataset.targets = (full_train_dataset.attr[:, attr_idx] == 1).long()
-        test_dataset.targets = (test_dataset.attr[:, attr_idx] == 1).long()
-    else:
-        raise ValueError("Unsupported dataset.")
+def load_data(cfg):
+    """Load and Dirichlet-partition the configured dataset among clients.
 
-    if dataset == 'CelebA':
-        targets = np.array(full_train_dataset.targets)
-    else:
-        targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
-    
-    # Split data using Dirichlet distribution
-    client_indices = partition_data(targets, num_clients, alpha)
-    logger.info("Data partitioned among %d clients.", num_clients)
-    
+    Uses the shared registry transform so FedAvg, FedAF and the plotter all
+    normalise identically (and therefore evaluate on the same footing).
+    """
+    logger.info("Loading %s dataset with alpha: %.4f", cfg.dataset, cfg.alpha)
+    full_train_dataset = _load_torchvision(cfg.dataset, cfg.data_path, train=True)
+    test_dataset = _load_torchvision(cfg.dataset, cfg.data_path, train=False)
+
+    targets = np.array(full_train_dataset.targets
+                       if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
+
+    # Split data using Dirichlet distribution (seeded for cross-process consistency)
+    client_indices = partition_data(targets, cfg.num_clients, cfg.alpha, seed=cfg.seed)
+    logger.info("Data partitioned among %d clients.", cfg.num_clients)
+
     test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
-    
+
     return full_train_dataset, client_indices, test_loader
 
-def load_client_data(client_id, args, selected_attribute='Male'):
-    """Load the data for a specific client based on client_id and selected attribute."""
-    if args.dataset == 'CIFAR10':
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-        full_train_dataset = datasets.CIFAR10(root='data', train=True, download=True, transform=transform)
-    elif args.dataset == 'MNIST':
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-        full_train_dataset = datasets.MNIST(root='data', train=True, download=True, transform=transform)
-    elif args.dataset == 'CelebA':
-        transform = transforms.Compose([
-            transforms.Resize((64, 64)),
-            transforms.CenterCrop(64),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)
-        ])
-        full_train_dataset = datasets.CelebA(root='data', split='train', download=True, transform=transform, target_type='attr')
-        
-        # Extract the 'Male' attribute index
-        attr_names = full_train_dataset.attr_names
-        if selected_attribute not in attr_names:
-            raise ValueError(f"Attribute '{selected_attribute}' not found in CelebA.")
-        attr_idx = attr_names.index(selected_attribute)
-        
-        # Binarize labels: 0 (Female), 1 (Male)
-        full_train_dataset.targets = (full_train_dataset.attr[:, attr_idx] == 1).long()
-    else:
-        raise ValueError("Unsupported dataset.")
+def load_client_data(client_id, cfg):
+    """Return the Subset of training data assigned to `client_id`."""
+    full_train_dataset = _load_torchvision(cfg.dataset, cfg.data_path, train=True)
 
-    if args.dataset == 'CelebA':
-        targets = np.array(full_train_dataset.targets)
-    else:
-        targets = np.array(full_train_dataset.targets if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
-    
-    client_indices = partition_data(targets, args.num_clients, args.alpha)
+    targets = np.array(full_train_dataset.targets
+                       if hasattr(full_train_dataset, 'targets') else full_train_dataset.labels)
 
+    client_indices = partition_data(targets, cfg.num_clients, cfg.alpha, seed=cfg.seed)
     indices = client_indices[client_id]
 
-    client_dataset = Subset(full_train_dataset, indices)
-    return client_dataset
+    return Subset(full_train_dataset, indices)
 
-def partition_data(targets, num_clients, alpha):
-    """Partition data using Dirichlet distribution."""
+def partition_data(targets, num_clients, alpha, seed=None):
+    """Partition data using a Dirichlet distribution.
+
+    `seed` makes the split reproducible AND identical across processes: the
+    server (load_data) and each worker (load_client_data) must derive the same
+    partition, which is not guaranteed by inherited RNG state under the 'spawn'
+    start method (the default on macOS/Windows).
+    """
+    if seed is not None:
+        np.random.seed(seed)
     num_classes = np.max(targets) + 1
     client_indices = [[] for _ in range(num_clients)]
     for c in range(num_classes):

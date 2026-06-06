@@ -1,106 +1,91 @@
+# main_fedavg.py
+#
+# FedAvg baseline driver. Settings come from config.yaml via
+# config.load_config('fedavg'), so dataset / model / client-count / paths are
+# shared with FedAF and the plotter (configure them in exactly one place).
+#
+# Restartability (cfg.resume): the run resumes from the last saved round
+# checkpoint (models/.../fedavg_global_model_{r}.pth); completed rounds are
+# skipped and the global model is restored before continuing.
+
 import torch
-from server.server_fedavg import Server
-from client.client_fedavg import Client
-from utils.utils_fedavg import load_data, randomize_labels, load_client_data
 import logging
 import random
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
+from config import load_config, Config, latest_completed_round
+from server.server_fedavg import Server
+from client.client_fedavg import Client
+from utils.utils_fedavg import load_data, randomize_labels, load_client_data
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class ARGS:
-    def __init__(self):
-        self.dataset = 'MNIST'  # 'MNIST' - 'CIFAR10' - 'CelebA'
-        self.model = 'ConvNet'  # 'ConvNet' - 'ResNet'
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.num_clients = 5
-        self.alpha = 0.1  # Dirichlet distribution parameter
-        self.local_epochs = 10
-        self.lr = 0.01
-        self.batch_size = 64
-        self.num_rounds = 20
-        self.honesty_ratio = 1  # Ratio of Honest Clients
-
-        if self.dataset == 'MNIST':
-            self.channel = 1
-            self.num_classes = 10
-            self.im_size = (28, 28)
-        elif self.dataset == 'CIFAR10':
-            self.channel = 3
-            self.num_classes = 10
-            self.im_size = (32, 32)
-        elif self.dataset == 'CelebA':
-            self.channel = 3
-            self.num_classes = 2
-            self.im_size = (64, 64)
 
 def train_client(client_state):
-    client_id, args_state, global_model_state, is_dishonest = client_state
-    # Reconstruct ARGS object
-    args = ARGS()
-    args.__dict__.update(args_state)
-    # Load client's data
-    train_data = load_client_data(client_id, args)
+    client_id, cfg_dict, global_model_state, is_dishonest = client_state
+    cfg = Config.from_dict(cfg_dict)
+    # Load client's data (partition is seeded -> identical to the server's split)
+    train_data = load_client_data(client_id, cfg)
     # Apply label randomization if the client is dishonest
     if is_dishonest:
         train_data = randomize_labels(train_data)
     # Reconstruct Client
-    client = Client(client_id=client_id, train_data=train_data, args=args)
+    client = Client(client_id=client_id, train_data=train_data, args=cfg)
     client.set_model(global_model_state)
     return client.train()
 
-def main():
-    args = ARGS()
-    # Set random seeds for reproducibility
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
 
-    logger.info("Starting Federated Learning with %d clients", args.num_clients)
+def main(cfg=None):
+    cfg = cfg or load_config('fedavg')
+    # Set random seeds for reproducibility
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    cfg.ensure_dirs()
+
+    logger.info("Starting FedAvg: dataset=%s model=%s K=%d alpha=%.3f rounds=%d device=%s resume=%s",
+                cfg.dataset, cfg.model, cfg.num_clients, cfg.alpha, cfg.rounds, cfg.device, cfg.resume)
 
     # Load data and distribute to clients
-    full_train_dataset, client_indices, test_loader = load_data(dataset=args.dataset, alpha=args.alpha, num_clients=args.num_clients)
+    full_train_dataset, client_indices, test_loader = load_data(cfg)
     logger.info("Data loaded and distributed to clients.")
 
     # Initialize server
-    server = Server(args)
+    server = Server(cfg)
 
     # Determine which clients are honest and which are dishonest
-    num_honest_clients = int(args.honesty_ratio * args.num_clients)
-    honest_clients = random.sample(range(args.num_clients), num_honest_clients)
-
-    data_sizes = []  # Collect data sizes of clients
+    num_honest_clients = int(cfg.honesty_ratio * cfg.num_clients)
+    honest_clients = random.sample(range(cfg.num_clients), num_honest_clients)
 
     # Collect data sizes for weighting during aggregation
-    for i in range(args.num_clients):
-        indices = client_indices[i]
-        data_size = len(indices)
-        data_sizes.append(data_size)
+    data_sizes = [len(client_indices[i]) for i in range(cfg.num_clients)]
 
-    # Lists to collect test accuracies
-    test_accuracies = []
+    # ---- restartability: resume from the last completed round ----
+    start_round = 1
+    if cfg.resume:
+        last = latest_completed_round(cfg.model_dir, 'fedavg')
+        if last >= 1:
+            server.load_round(last)
+            start_round = last + 1
+            logger.info("Resuming FedAvg from round %d.", start_round)
+
+    cfg_dict = cfg.to_dict()
 
     # Federated learning rounds
-    for round_num in range(1, args.num_rounds + 1):
+    for round_num in range(start_round, cfg.rounds + 1):
         logger.info("\n--- Round %d ---", round_num)
 
         # Distribute global model to clients
         global_model = server.get_global_model()
 
         # Prepare client states for parallel execution
-        client_states = []
-        for client_id in range(args.num_clients):
-            is_dishonest = client_id not in honest_clients
-            client_state = (
-                client_id,
-                vars(args),
-                global_model,  # Global model state_dict
-                is_dishonest
-            )
-            client_states.append(client_state)
+        client_states = [
+            (client_id, cfg_dict, global_model, client_id not in honest_clients)
+            for client_id in range(cfg.num_clients)
+        ]
 
         # Clients perform local training in parallel
         with ProcessPoolExecutor() as executor:
@@ -109,11 +94,12 @@ def main():
         # Server aggregates client models using data sizes
         server.aggregate(client_models, data_sizes)
 
-        # Evaluate global model on test data
+        # Evaluate global model on test data (also checkpoints the round)
         accuracy = server.evaluate(test_loader, round_num)
-        test_accuracies.append(accuracy)
+        logger.info("Round %d global accuracy: %.2f%%", round_num, accuracy)
 
     logger.info("Federated Learning completed.")
+
 
 if __name__ == "__main__":
     main()

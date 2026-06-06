@@ -1,234 +1,147 @@
-# server_fedaf.py
+# server_fedaf.py  (corrected)
+#
+# Key fixes vs. original:
+#   * LGKM now matches FULL per-class soft-label distributions (Eq. 13-16):
+#       R = [r_0..r_{C-1}]  (client real-data soft labels, [C, C])  -- the target
+#       T = [t_0..t_{C-1}]  (global model soft labels on synthetic data, [C, C])
+#     instead of collapsing both to a [C] vector of diagonal confidences.
+#   * Symmetric KL uses reduction='batchmean' (mathematically correct KL,
+#     averaged over classes) rather than 'mean' (which was off by a factor C).
+#   * Optimiser is SGD(lr, momentum=0.9) per the paper (momentum was missing).
 
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
-from torchvision import datasets, transforms
-from utils.utils_fedaf import load_latest_model, ensure_directory_exists
+from utils.utils_fedaf import load_latest_model, ensure_directory_exists, get_test_loader
 import torch.optim as optim
 
-def train_model(model, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs):
-    """
-    Trains the model using the provided training data loader, including LGKM loss.
 
-    Args:
-        model (torch.nn.Module): The global model to train.
-        train_loader (DataLoader): DataLoader for training data.
-        Rc_tensor (torch.Tensor): Aggregated class-wise soft labels from clients (shape: [num_classes,]).
-        num_classes (int): Number of classes.
-        lambda_glob (float): Regularization parameter for LGKM loss.
-        temperature (float): Temperature for softmax scaling.
-        device (torch.device): Device to train on.
-        num_epochs (int): Number of training epochs.
-    """
+def train_model(model, train_loader, R_matrix, num_classes, lambda_glob,
+                temperature, device, num_epochs, lr=0.001, momentum=0.9):
+    """Train the global model on the pooled synthetic data with CE + LGKM."""
     model.to(device)
     model.train()
     criterion_ce = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.001)
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
-    epsilon = 1e-8
-    Rc_smooth = Rc_tensor + epsilon  # [num_classes,]
+    eps = 1e-8
+    R = R_matrix.to(device).clamp_min(eps)
+    R = R / R.sum(dim=1, keepdim=True)          # [C, C], each row a distribution
+    logR = R.log()
 
     for epoch in range(num_epochs):
-        running_loss = 0.0
-        running_ce_loss = 0.0
-        running_lgkm_loss = 0.0
-
+        run_total = run_ce = run_lgkm = 0.0
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-        
-            outputs = model(inputs)  # [batch_size, num_classes]
-            loss_ce = criterion_ce(outputs, labels)
-        
-            soft_labels = nn.functional.softmax(outputs / temperature, dim=1)  # [batch_size, num_classes]
-        
-            # Initialize T
-            T = torch.zeros(num_classes, device=device)
-        
-            # Aggregate soft labels class-wise
-            for c in range(num_classes):
-                mask = labels == c  # [batch_size,]
-                if mask.sum() > 0:
-                    T[c] = soft_labels[mask].mean(dim=0)[c]
-                else:
-                    T[c] = 1.0 / num_classes
 
-            T = T + epsilon
-        
-            # LGKM loss using KL Divergence
-            Rc_normalized = Rc_smooth / Rc_smooth.sum()
-            T_normalized = T / T.sum()
-        
-            kl_div1 = nn.functional.kl_div(T_normalized.log(), Rc_normalized, reduction='mean')
-            kl_div2 = nn.functional.kl_div(Rc_normalized.log(), T_normalized, reduction='mean')
-            loss_lgkm = (kl_div1 + kl_div2) / 2
-        
-            # Combine losses
-            combined_loss = loss_ce + lambda_glob * loss_lgkm
-        
-            combined_loss.backward()
+            outputs = model(inputs)                          # [B, C]
+            loss_ce = criterion_ce(outputs, labels)
+
+            # --- build T = [t_c] over the classes present in this batch (Eq. 13) ---
+            soft = F.softmax(outputs / temperature, dim=1)   # [B, C]
+            present, t_rows = [], []
+            for c in range(num_classes):
+                mask = labels == c
+                if mask.any():
+                    t_rows.append(soft[mask].mean(dim=0))    # full [C] distribution
+                    present.append(c)
+
+            if t_rows:
+                T = torch.stack(t_rows, dim=0).clamp_min(eps)        # [P, C]
+                T = T / T.sum(dim=1, keepdim=True)
+                Rp = R[present]                                      # [P, C]
+                # LGKM = 1/2 ( KL(R||T) + KL(T||R) ), averaged over present classes (Eq. 15)
+                kl_rt = F.kl_div(T.log(), Rp, reduction='batchmean')  # KL(R||T)
+                kl_tr = F.kl_div(Rp.log(), T, reduction='batchmean')  # KL(T||R)
+                loss_lgkm = 0.5 * (kl_rt + kl_tr)
+            else:
+                loss_lgkm = torch.zeros((), device=device)
+
+            loss = loss_ce + lambda_glob * loss_lgkm
+            loss.backward()
             optimizer.step()
-        
-            running_loss += combined_loss.item()
-            running_ce_loss += loss_ce.item()
-            running_lgkm_loss += loss_lgkm.item()
-        
-        avg_loss = running_loss / len(train_loader)
-        avg_ce_loss = running_ce_loss / len(train_loader)
-        avg_lgkm_loss = running_lgkm_loss / len(train_loader)
-        
-        print(f'Server: Epoch {epoch + 1}, Total Loss: {avg_loss:.4f}, CE Loss: {avg_ce_loss:.4f}, LGKM Loss: {avg_lgkm_loss:.4f}')
-        running_loss = 0.0
+
+            run_total += loss.item(); run_ce += loss_ce.item(); run_lgkm += float(loss_lgkm)
+
+        n = max(1, len(train_loader))
+        print(f"Server: Epoch {epoch + 1}/{num_epochs} | Total {run_total / n:.4f} "
+              f"| CE {run_ce / n:.4f} | LGKM {run_lgkm / n:.4f}")
+
 
 def evaluate_model(model, test_loader, device):
-    """
-    Evaluates the model's performance on the test dataset.
-
-    Args:
-        model (torch.nn.Module): The global model to evaluate.
-        test_loader (DataLoader): DataLoader for test data.
-        device (torch.device): Device to evaluate on.
-    """
-    model.eval()  # Set the model to evaluation mode
-    total = 0
-    correct = 0
-    with torch.no_grad():  # No gradients needed
+    model.eval()
+    correct = total = 0
+    with torch.no_grad():
         for inputs, labels in test_loader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
+            _, predicted = torch.max(model(inputs).data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+    acc = 100 * correct / total
+    print(f"Accuracy of the network on test images: {acc:.2f}%")
+    return acc
 
-    accuracy = 100 * correct / total
-    print(f'Accuracy of the network on test images: {accuracy:.2f}%')
 
-def server_update(model_name, data, num_partitions, round_num, lambda_glob, ipc, method, hratio, temperature, num_epochs, device="cpu"):
+def server_update(cfg, round_num):
+    """Train the FedAF global model for `round_num` from pooled synthetic data.
+
+    Every setting (dataset meta, paths, LGKM weight, epochs, LR, device) comes
+    from the shared Config, so the server stays in lock-step with the clients
+    and the plotter.
     """
-    Aggregates synthetic data from all clients, updates the global model, evaluates it,
-    and computes aggregated logits to send back to clients.
-
-    Args:
-        model_name (str): Model architecture (e.g., 'ConvNet').
-        data (str): Dataset name ('CIFAR10' or 'MNIST').
-        num_partitions (int): Number of client partitions.
-        round_num (int): Current communication round number.
-        ipc (int): Instances per class.
-        method (str): Method used, e.g., 'fedaf'.
-        hratio (float): Honesty ratio for client honesty.
-        temperature (float): Temperature for softmax scaling.
-        num_epochs (int): Number of epochs for training.
-        device (str): Device to use for training ('cuda' or 'cpu').
-    """
-    # Define paths and ensure directories exist
-    data_path = '/home/data'
-    model_dir = os.path.join('/home/models', data, model_name, str(num_partitions), str(hratio))
+    device = cfg.device
+    num_classes = cfg.num_classes
+    model_dir = cfg.model_dir
     ensure_directory_exists(model_dir)
 
-    # Load test dataset with necessary transformations
-    if data == 'CIFAR10':
-        channel = 3
-        im_size = (32, 32)
-        num_classes = 10
-        mean = [0.4914, 0.4822, 0.4465]
-        std = [0.2023, 0.1994, 0.2010]
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
-        dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
-    elif data == 'MNIST':
-        channel = 1
-        im_size = (28, 28)
-        num_classes = 10
-        mean = [0.1307]
-        std = [0.3081]
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean, std=std)
-        ])
-        dst_test = datasets.MNIST(data_path, train=False, download=True, transform=transform)
+    test_loader = get_test_loader(cfg, batch_size=cfg.server_batch_size)
+
+    # ---- aggregated client soft labels R = [r_0..r_{C-1}], shape [C, C] ----
+    global_R_path = os.path.join(cfg.logits_dir, 'Global', f'Round{round_num}_Global_Rc.pt')
+    if os.path.exists(global_R_path):
+        R_matrix = torch.load(global_R_path, map_location=device)
+        if not (isinstance(R_matrix, torch.Tensor) and R_matrix.shape == (num_classes, num_classes)):
+            raise ValueError(f"R has shape {getattr(R_matrix, 'shape', None)}; "
+                             f"expected [{num_classes}, {num_classes}].")
+        print(f"Server: loaded aggregated R matrix {tuple(R_matrix.shape)}.")
     else:
-        raise ValueError(f"Unsupported dataset: {data}")
+        print("Server: no aggregated R found; using uniform.")
+        R_matrix = torch.full((num_classes, num_classes), 1.0 / num_classes, device=device)
 
-    test_loader = DataLoader(dst_test, batch_size=256, shuffle=False, num_workers=4)
-
-    # Load aggregated class-wise soft labels Rc
-    global_probs_path = os.path.join('/home/logits', 'Global', f'Round{round_num}_Global_Rc.pt')
-    if os.path.exists(global_probs_path):
-        Rc = torch.load(global_probs_path, map_location=device)
-        # Ensure Rc is of shape [num_classes,]
-        if Rc.dim() == 1 and Rc.size(0) == num_classes:
-            print(f"Server: Loaded aggregated class-wise soft labels R(c) with shape {Rc.shape}.")
+    # ---- pool synthetic data from all clients ----
+    all_images, all_labels = [], []
+    for client_id in range(cfg.num_clients):
+        fn = os.path.join(cfg.save_path, f'Client_{client_id}',
+                          f'res_{cfg.method}_{cfg.dataset}_{cfg.model_name}_Client{client_id}_{cfg.ipc}ipc_Round{round_num}.pt')
+        if os.path.exists(fn):
+            d = torch.load(fn, map_location=device)
+            if d.get('images') is not None and d['images'].size(0) > 0:
+                all_images.append(d['images']); all_labels.append(d['labels'])
+                print(f"Server: loaded synthetic data from Client {client_id}.")
         else:
-            raise ValueError(f"Rc has incorrect shape: {Rc.shape}. Expected [{num_classes}].")
-    else:
-        print("Server: No aggregated class-wise soft labels found. Initializing R(c) with zeros.")
-        Rc = torch.zeros(num_classes, device=device)
-
-    all_images = []
-    all_labels = []
-
-    # Aggregate synthetic data from all clients
-    print("Server: Aggregating synthetic data from clients.")
-    for client_id in range(num_partitions):
-        synthetic_data_filename = os.path.join(
-            '/home',
-            # '',
-            'result',
-            f'Client_{client_id}',
-            f'res_{method}_{data}_{model_name}_Client{client_id}_{ipc}ipc_Round{round_num}.pt'
-        )
-
-        if os.path.exists(synthetic_data_filename):
-            try:
-                data_dict = torch.load(synthetic_data_filename, map_location=device)
-                if 'images' in data_dict and 'labels' in data_dict and data_dict['images'].size(0) > 0:
-                    print(f"Server: Loaded synthetic data from Client {client_id}.")
-                    images, labels = data_dict['images'], data_dict['labels']
-                    all_images.append(images)
-                    all_labels.append(labels)
-                else:
-                    print(f"Server: No valid synthetic data from Client {client_id}. Skipping.")
-            except Exception as e:
-                print(f"Server: Error loading data from Client {client_id} - {e}")
-        else:
-            print(f"Server: No synthetic data found for Client {client_id} at {synthetic_data_filename}. Skipping.")
+            print(f"Server: no synthetic data for Client {client_id}. Skipping.")
 
     if not all_images:
-        print("Server: No synthetic data aggregated from clients. Skipping model update.")
+        print("Server: no synthetic data aggregated. Skipping update.")
         return
 
-    # Concatenate all synthetic data
-    all_images = torch.cat(all_images, dim=0)
-    all_labels = torch.cat(all_labels, dim=0)
+    final_dataset = TensorDataset(torch.cat(all_images), torch.cat(all_labels))
+    train_loader = DataLoader(final_dataset, batch_size=cfg.server_batch_size, shuffle=True)
 
-    # Create training dataset and loader
-    final_dataset = TensorDataset(all_images, all_labels)
-    train_loader = DataLoader(final_dataset, batch_size=256, shuffle=True, num_workers=4)
-
-    # Load the latest global model
-    print("Server: Loading the latest global model.")
-    net = load_latest_model(model_dir, model_name, channel, num_classes, im_size, device)
+    net = load_latest_model(model_dir, cfg.model_name, cfg.channel, num_classes, cfg.im_size, device)
     net.train()
 
-    Rc_tensor = Rc.to(device)  # Shape: [num_classes,]
+    print("Server: training global model (CE + LGKM).")
+    train_model(net, train_loader, R_matrix, num_classes, cfg.loc_lgkm,
+                cfg.temperature, device, num_epochs=cfg.global_epochs, lr=cfg.global_lr)
 
-    # Train the global model
-    print("Server: Starting global model training.")
-    train_model(net, train_loader, Rc_tensor, num_classes, lambda_glob, temperature, device, num_epochs=num_epochs)
-
-    # Evaluate the updated global model
-    print("Server: Evaluating the updated global model.")
+    print("Server: evaluating global model.")
     evaluate_model(net, test_loader, device)
 
-    # Save the updated global model
     model_path = os.path.join(model_dir, f"fedaf_global_model_{round_num}.pth")
-    try:
-        ensure_directory_exists(os.path.dirname(model_path))
-        torch.save(net.state_dict(), model_path)
-        print(f"Server: Global model updated and saved to {model_path}.")
-    except Exception as e:
-        print(f"Server: Error saving the global model - {e}")
+    ensure_directory_exists(os.path.dirname(model_path))
+    torch.save(net.state_dict(), model_path)
+    print(f"Server: global model saved to {model_path}.")
