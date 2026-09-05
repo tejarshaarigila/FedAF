@@ -6,6 +6,8 @@ Python implementation of **FedAF (CVPR 2024)** (Aggregation-Free Federated Learn
 
 Federated Learning enables collaborative model training across decentralized devices holding local data, without exchanging the data itself. This framework allows to compare FedAF and FedAvg in terms of performance and efficiency.
 
+<img width="1200" height="800" alt="image" src="https://github.com/user-attachments/assets/cf6f41ec-9aa7-4d5d-8591-d92120fa9b77" />
+
 ## Features
 
 - **FedAF Implementation**: Benchmarking Aggregation-Free Federated Learning using synthetic data condensation.
